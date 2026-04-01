@@ -1,0 +1,10 @@
+{
+  "reportMissingImports": false,
+  "reportMissingModuleSource": false,
+  "reportGeneralTypeIssues": false,
+  "pythonVersion": "3.12",
+  "include": ["app"],
+  "executionEnvironments": [
+    { "root": "app" }
+  ]
+}

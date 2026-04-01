@@ -1,0 +1,375 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/docker/init-databases.sql:/docker-entrypoint-initdb.d/init-databases.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    environment:
+      RABBITMQ_VM_MEMORY_HIGH_WATERMARK_RELATIVE: 0.7
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_port_connectivity"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+
+  mailpit:
+    image: axllent/mailpit:latest
+    profiles: ["extra"]
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
+  gateway-service:
+    build:
+      context: .
+      dockerfile: ./infra/docker/node-service.Dockerfile
+      args:
+        WORKSPACE: services/gateway-service
+    env_file: .env
+    environment:
+      CHOKIDAR_USEPOLLING: "true"
+    volumes:
+      - ./services/gateway-service:/workspace/services/gateway-service
+      - ./packages:/workspace/packages
+      - /workspace/node_modules
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    ports:
+      - "4000:4000"
+
+  auth-service:
+    build:
+      context: .
+      dockerfile: ./infra/docker/node-service.Dockerfile
+      args:
+        WORKSPACE: services/auth-service
+    env_file: .env
+    environment:
+      CHOKIDAR_USEPOLLING: "true"
+    volumes:
+      - .:/workspace
+      - /workspace/node_modules
+    ports:
+      - "4001:4001"
+    deploy:
+      resources:
+        limits:
+          memory: 384M
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+  data-service:
+    build:
+      context: .
+      dockerfile: ./infra/docker/node-service.Dockerfile
+      args:
+        WORKSPACE: services/data-service
+    env_file: .env
+    environment:
+      CHOKIDAR_USEPOLLING: "true"
+    volumes:
+      - .:/workspace
+      - /workspace/node_modules
+    ports:
+      - "4003:4003"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      minio:
+        condition: service_started
+  notification-service:
+    build:
+      context: .
+      dockerfile: ./infra/docker/node-service.Dockerfile
+      args:
+        WORKSPACE: services/notification-service
+    env_file: .env
+    environment:
+      CHOKIDAR_USEPOLLING: "true"
+    volumes:
+      - .:/workspace
+      - /workspace/node_modules
+    ports:
+      - "4005:4005"
+    deploy:
+      resources:
+        limits:
+          memory: 2048M
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+  analytics-service:
+    build:
+      context: .
+      dockerfile: ./infra/docker/node-service.Dockerfile
+      args:
+        WORKSPACE: services/analytics-service
+    env_file: .env
+    environment:
+      CHOKIDAR_USEPOLLING: "true"
+    volumes:
+      - .:/workspace
+      - /workspace/node_modules
+    ports:
+      - "4006:4006"
+    deploy:
+      resources:
+        limits:
+          memory: 384M
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+  training-service:
+    build:
+      context: .
+      dockerfile: ./infra/docker/python-service.Dockerfile
+      args:
+        SERVICE_DIR: services/training-service
+    profiles: ["ai"]
+    env_file: .env
+    working_dir: /workspace/services/training-service
+    volumes:
+      - .:/workspace
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    command: uvicorn app.main:app --host 0.0.0.0 --port 5007
+    deploy:
+      resources:
+        limits:
+          memory: 2048M
+
+  training-worker:
+    build:
+      context: .
+      dockerfile: ./infra/docker/python-service.Dockerfile
+      args:
+        SERVICE_DIR: services/training-service
+    env_file: .env
+    working_dir: /workspace/services/training-service
+    volumes:
+      - .:/workspace
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    profiles: ["ai"]
+    deploy:
+      resources:
+        limits:
+          memory: 2048M
+    command: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=1
+
+  training-consumer:
+    build:
+      context: .
+      dockerfile: ./infra/docker/python-service.Dockerfile
+      args:
+        SERVICE_DIR: services/training-service
+    env_file: .env
+    working_dir: /workspace/services/training-service
+    volumes:
+      - .:/workspace
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    profiles: ["ai"]
+    command: python -m app.consumer
+
+  prediction-service:
+    build:
+      context: .
+      dockerfile: ./infra/docker/python-service.Dockerfile
+      args:
+        SERVICE_DIR: services/prediction-service
+    profiles: ["ai"]
+    env_file: .env
+    working_dir: /workspace/services/prediction-service
+    volumes:
+      - .:/workspace
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    command: uvicorn app.main:app --host 0.0.0.0 --port 5008
+    deploy:
+      resources:
+        limits:
+          memory: 2048M
+
+  prediction-worker:
+    build:
+      context: .
+      dockerfile: ./infra/docker/python-service.Dockerfile
+      args:
+        SERVICE_DIR: services/prediction-service
+    profiles: ["ai"]
+    env_file: .env
+    working_dir: /workspace/services/prediction-service
+    volumes:
+      - .:/workspace
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    command: python -m app.worker
+    deploy:
+      resources:
+        limits:
+          memory: 2048M
+
+  xai-service:
+    build:
+      context: .
+      dockerfile: ./infra/docker/python-service.Dockerfile
+      args:
+        SERVICE_DIR: services/xai-service
+    profiles: ["ai"]
+    env_file: .env
+    working_dir: /workspace/services/xai-service
+    volumes:
+      - .:/workspace
+    depends_on:
+      minio:
+        condition: service_started
+    command: uvicorn app.main:app --host 0.0.0.0 --port 5006
+    deploy:
+      resources:
+        limits:
+          memory: 2048M
+
+  fraud-service:
+    build:
+      context: .
+      dockerfile: ./infra/docker/python-service.Dockerfile
+      args:
+        SERVICE_DIR: services/fraud-service
+    profiles: ["ai"]
+    env_file: .env
+    working_dir: /workspace/services/fraud-service
+    volumes:
+      - .:/workspace
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    command: uvicorn app.main:app --host 0.0.0.0 --port 5004
+    deploy:
+      resources:
+        limits:
+          memory: 2048M
+
+  fraud-worker:
+    build:
+      context: .
+      dockerfile: ./infra/docker/python-service.Dockerfile
+      args:
+        SERVICE_DIR: services/fraud-service
+    profiles: ["ai"]
+    env_file: .env
+    working_dir: /workspace/services/fraud-service
+    volumes:
+      - .:/workspace
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    command: python -m app.worker
+    deploy:
+      resources:
+        limits:
+          memory: 2048M
+
+  web:
+    build:
+      context: .
+      dockerfile: ./infra/docker/web.Dockerfile
+    env_file: .env
+    volumes:
+      - ./apps/web:/workspace/apps/web
+      - ./packages:/workspace/packages
+      - ./services:/workspace/services
+      - /workspace/node_modules
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
+    depends_on:
+      gateway-service:
+        condition: service_started
+    ports:
+      - "5175:5175"
+
+volumes:
+  postgres_data:
+  minio_data:

@@ -1,0 +1,36 @@
+services:
+  auth-service:
+    ports:
+      - "4001:4001"
+
+  billing-service:
+    ports:
+      - "4002:4002"
+
+  data-service:
+    ports:
+      - "4003:4003"
+
+  notification-service:
+    ports:
+      - "4005:4005"
+
+  analytics-service:
+    ports:
+      - "4006:4006"
+
+  training-service:
+    ports:
+      - "5007:5007"
+
+  prediction-service:
+    ports:
+      - "5008:5008"
+
+  xai-service:
+    ports:
+      - "5006:5006"
+
+  fraud-service:
+    ports:
+      - "5004:5004"
