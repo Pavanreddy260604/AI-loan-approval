@@ -58,7 +58,7 @@ export function LandingPage() {
           <div className="hidden gap-10 text-[11px] font-black text-base-600 uppercase tracking-[0.2em] md:flex">
             <a href="#capabilities" className="hover:text-base-50 transition-colors flex items-center gap-2 italic">Capabilities</a>
             <a href="#pricing" className="hover:text-base-50 transition-colors italic">Free Access</a>
-            <a href="#" className="hover:text-base-50 transition-colors flex items-center gap-1.5 whitespace-nowrap italic">Docs <ExternalLink size={10} /></a>
+            <a href="#capabilities" className="hover:text-base-50 transition-colors flex items-center gap-1.5 whitespace-nowrap italic">Docs <ExternalLink size={10} /></a>
           </div>
 
           <div className="flex items-center gap-6">
@@ -106,9 +106,11 @@ export function LandingPage() {
                   Create Account
                 </Button>
               </Link>
-              <Button variant="secondary" className="h-16 px-12 text-[11px] font-black uppercase tracking-[0.3em] w-full sm:w-auto border-base-800 bg-base-900/50 hover:bg-base-800 italic" leftIcon={<Zap size={18} className="text-primary" fill="currentColor" />}>
-                View Demo
-              </Button>
+              <Link to="/auth">
+                <Button variant="secondary" className="h-16 px-12 text-[11px] font-black uppercase tracking-[0.3em] w-full sm:w-auto border-base-800 bg-base-900/50 hover:bg-base-800 italic" leftIcon={<Zap size={18} className="text-primary" fill="currentColor" />}>
+                  View Demo
+                </Button>
+              </Link>
             </div>
 
             <div className="mt-16 flex items-center gap-8 grayscale opacity-30 hover:grayscale-0 hover:opacity-100 transition-all duration-700">
@@ -331,10 +333,10 @@ export function LandingPage() {
              <div className="space-y-8">
                 <h4 className="text-[11px] font-black text-base-50 uppercase tracking-[0.3em] italic">Product</h4>
                 <ul className="space-y-4 text-[13px] font-black text-base-700">
-                   <li className="hover:text-primary cursor-pointer transition-all uppercase tracking-[0.2em] italic">Decision Engine</li>
-                   <li className="hover:text-primary cursor-pointer transition-all uppercase tracking-[0.2em] italic">Model Registry</li>
-                   <li className="hover:text-primary cursor-pointer transition-all uppercase tracking-[0.2em] italic">Compliance API</li>
-                   <li className="hover:text-primary cursor-pointer transition-all uppercase tracking-[0.2em] italic">Cloud Dashboard</li>
+                   <li><a href="#capabilities" className="hover:text-primary transition-all uppercase tracking-[0.2em] italic">Decision Engine</a></li>
+                   <li><a href="#capabilities" className="hover:text-primary transition-all uppercase tracking-[0.2em] italic">Model Registry</a></li>
+                   <li><a href="#capabilities" className="hover:text-primary transition-all uppercase tracking-[0.2em] italic">Compliance API</a></li>
+                   <li><Link to="/auth" className="hover:text-primary transition-all uppercase tracking-[0.2em] italic">Cloud Dashboard</Link></li>
                 </ul>
              </div>
 
@@ -354,8 +356,8 @@ export function LandingPage() {
               &copy; 2026 ORIGINATE AI SYSTEMS. OPERATING WITH INTEGRITY.
             </p>
             <div className="flex gap-12 text-[10px] font-black text-base-800 uppercase tracking-[0.3em] italic">
-              <a href="#" className="hover:text-base-50 transition-colors">Privacy Policy</a>
-              <a href="#" className="hover:text-base-50 transition-colors">Terms of Use</a>
+              <a href="#pricing" className="hover:text-base-50 transition-colors">Privacy Policy</a>
+              <a href="#pricing" className="hover:text-base-50 transition-colors">Terms of Use</a>
             </div>
           </div>
         </div>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   LayoutDashboard,
   Database,
@@ -15,7 +15,7 @@ import {
   Menu,
   X
 } from "lucide-react";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { AuthSession } from "../lib/api";
 
@@ -75,7 +75,7 @@ export function AppSidebar({ auth, onLogout }: AppSidebarProps) {
   const nav = getNavigation(auth.session?.user.role);
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
-  
+
   const userInitial = auth.session?.user.fullName?.[0] || "?";
 
   // Auto-close mobile sidebar on navigation or when switching to desktop
@@ -89,12 +89,22 @@ export function AppSidebar({ auth, onLogout }: AppSidebarProps) {
     setMobileOpen(false);
   }, [location.pathname]);
 
+  // Close mobile menu on Escape key
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMobileOpen(false);
+    };
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [mobileOpen]);
+
   return (
     <>
-      {/* Mobile Top Bar (Task 11) */}
+      {/* Mobile Top Bar */}
       <AnimatePresence>
         {isMobile && (
-          <motion.div 
+          <motion.div
             initial={{ y: -60 }}
             animate={{ y: 0 }}
             exit={{ y: -60 }}
@@ -106,8 +116,8 @@ export function AppSidebar({ auth, onLogout }: AppSidebarProps) {
               </div>
               <span className="font-bold text-base-50 text-sm tracking-tight">ORIGINATE</span>
             </Link>
-            <button 
-              onClick={() => setMobileOpen(true)} 
+            <button
+              onClick={() => setMobileOpen(true)}
               className="p-2 text-base-400 hover:text-base-50 transition-colors"
               aria-label="Open mobile menu"
             >
@@ -120,7 +130,7 @@ export function AppSidebar({ auth, onLogout }: AppSidebarProps) {
       {/* Mobile Sidebar */}
       <AnimatePresence>
         {mobileOpen && (
-          <div className="fixed inset-0 z-[60] lg:hidden">
+          <div className="fixed inset-0 z-[60] lg:hidden" role="dialog" aria-modal="true" aria-label="Navigation menu">
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -136,7 +146,7 @@ export function AppSidebar({ auth, onLogout }: AppSidebarProps) {
             >
               <div className="p-4 border-b border-base-800 flex items-center justify-between">
                 <span className="font-bold text-base-50 text-sm tracking-tight">ORIGINATE</span>
-                <button onClick={() => setMobileOpen(false)} className="text-base-400"><X size={20} /></button>
+                <button onClick={() => setMobileOpen(false)} className="text-base-400" aria-label="Close menu"><X size={20} /></button>
               </div>
               <div className="flex-1 p-4 space-y-1">
                 {nav.map((item) => (
@@ -156,7 +166,8 @@ export function AppSidebar({ auth, onLogout }: AppSidebarProps) {
       {/* Desktop Sidebar */}
       <motion.aside
         animate={{ width: collapsed ? 72 : 240 }}
-        className={`${isDesktop ? 'flex' : 'hidden'} flex-col bg-base-950 border-r border-base-800 h-screen sticky top-0 z-40`}
+        transition={{ type: "tween", duration: 0.2 }}
+        className={`${isDesktop ? 'flex' : 'hidden'} flex-col bg-base-950 border-r border-base-800 h-screen sticky top-0 z-40 will-change-[width]`}
       >
         <div className="h-14 flex items-center justify-between px-6 border-b border-base-800">
           {!collapsed && (
@@ -200,11 +211,11 @@ export function AppSidebar({ auth, onLogout }: AppSidebarProps) {
               </div>
             )}
           </div>
-          
-          <button 
+
+          <button
                 onClick={() => setCollapsed(!collapsed)}
                 className="w-full flex items-center justify-center h-8 text-base-500 hover:text-base-300 hover:bg-base-900 rounded-pro transition-colors"
-                title={collapsed ? "Expand Sidebar" : "Collapse Sidebar"}
+                aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
           >
             {collapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
           </button>
@@ -227,6 +238,28 @@ export function AppSidebar({ auth, onLogout }: AppSidebarProps) {
 export function AppShell({ children, auth, onLogout }: { children: React.ReactNode, auth: any, onLogout: () => void }) {
   const { isDesktop } = useBreakpoint();
   const location = useLocation();
+  const navigate = useNavigate();
+  const [searchQuery, setSearchQuery] = useState("");
+
+  const handleSearch = useCallback((e: React.FormEvent) => {
+    e.preventDefault();
+    if (searchQuery.trim()) {
+      navigate(`/app/predict?q=${encodeURIComponent(searchQuery.trim())}`);
+      setSearchQuery("");
+    }
+  }, [searchQuery, navigate]);
+
+  // Focus search on "/" key
+  useEffect(() => {
+    const handleSlash = (e: KeyboardEvent) => {
+      if (e.key === "/" && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)) {
+        e.preventDefault();
+        document.getElementById("global-search")?.focus();
+      }
+    };
+    window.addEventListener("keydown", handleSlash);
+    return () => window.removeEventListener("keydown", handleSlash);
+  }, []);
 
   return (
     <div className="flex min-h-screen bg-base-950">
@@ -235,32 +268,38 @@ export function AppShell({ children, auth, onLogout }: { children: React.ReactNo
         <header className="h-14 border-b border-base-800 flex items-center justify-between px-4 lg:px-8 bg-base-950/50 backdrop-blur-md sticky top-0 z-30">
           <div className="flex items-center gap-4 flex-1">
              {isDesktop && (
-               <motion.div 
-                 whileHover={{ scale: 1.01 }}
-                 className="flex items-center gap-2 max-w-sm w-full bg-base-900 border border-base-800 rounded-pro px-3 py-1.5 text-base-500"
-               >
+               <form onSubmit={handleSearch} className="flex items-center gap-2 max-w-sm w-full bg-base-900 border border-base-800 rounded-pro px-3 py-1.5 text-base-500 focus-within:border-primary/50 transition-colors">
                    <Search size={14} />
-                   <input type="text" placeholder="Search loans or datasets..." className="bg-transparent border-none text-xs focus:ring-0 w-full" />
-                   <span className="text-[10px] font-mono border border-base-800 rounded px-1">/</span>
-               </motion.div>
+                   <input
+                     id="global-search"
+                     type="text"
+                     value={searchQuery}
+                     onChange={(e) => setSearchQuery(e.target.value)}
+                     placeholder="Search loans or datasets..."
+                     className="bg-transparent border-none text-xs focus:ring-0 w-full outline-none"
+                     aria-label="Search loans or datasets"
+                   />
+                   <span className="text-[10px] font-mono border border-base-800 rounded px-1" aria-hidden="true">/</span>
+               </form>
              )}
           </div>
           <div className="flex items-center gap-4">
-             <motion.button 
-                whileHover={{ scale: 1.1 }}
-                whileTap={{ scale: 0.9 }}
+             <button
                 className="text-base-400 hover:text-base-50 transition-colors p-2 relative"
+                aria-label="Notifications"
              >
                 <Bell size={18} />
-                <span className="absolute top-2 right-2 h-1.5 w-1.5 bg-primary rounded-full" />
-             </motion.button>
-             <div className="h-8 w-[1px] bg-base-800 mx-2" />
-             <motion.div 
-               whileHover={{ scale: 1.05 }}
+                <span className="absolute top-2 right-2 h-1.5 w-1.5 bg-primary rounded-full" aria-hidden="true" />
+             </button>
+             <div className="h-8 w-[1px] bg-base-800 mx-2" aria-hidden="true" />
+             <div
                className="h-8 w-8 rounded-full bg-base-900 border border-base-800 flex items-center justify-center cursor-pointer"
+               role="button"
+               aria-label="User profile"
+               tabIndex={0}
              >
                 <User size={16} />
-             </motion.div>
+             </div>
           </div>
         </header>
         <main className="flex-1 overflow-y-auto">

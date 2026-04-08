@@ -97,6 +97,7 @@ export function AdminPage({ auth }: { auth: AuthContextValue }) {
   }
 
   if (telemetry.error) return <InlineError message={(telemetry.error as Error).message} />;
+  if (audits.error) return <InlineError message={(audits.error as Error).message} />;
 
   const { services = [], systemUsage = { cpu: 0, memory: 0 }, users = [] } = telemetry.data || {};
 
@@ -269,12 +270,17 @@ export function AdminPage({ auth }: { auth: AuthContextValue }) {
               </div>
            </div>
 
-           <Table 
-             data={services} 
+           <Table
+             data={services}
              columns={serviceColumns}
              className="shadow-3xl border-base-800/50"
              onRowClick={() => {}}
            />
+           {services.length === 0 && !telemetry.isLoading && (
+             <div className="py-12 text-center text-xs text-base-500 border border-base-800 rounded-lg bg-base-900/20">
+               No services found.
+             </div>
+           )}
         </div>
 
         {/* User Directory */}
@@ -292,6 +298,9 @@ export function AdminPage({ auth }: { auth: AuthContextValue }) {
               
               <Card border className="p-0 overflow-hidden bg-base-900/40 border-base-800 shadow-2xl">
                  <div className="max-h-[500px] overflow-y-auto custom-scrollbar divide-y divide-base-800">
+                    {users.length === 0 && (
+                      <div className="py-12 text-center text-xs text-base-500">No users found.</div>
+                    )}
                     {users.map((user) => (
                        <div key={user.id} className="p-6 flex items-center justify-between hover:bg-base-800/50 transition-all group cursor-pointer relative overflow-hidden">
                           <div className="flex items-center gap-4 min-w-0 relative z-10">
@@ -355,7 +364,7 @@ export function AdminPage({ auth }: { auth: AuthContextValue }) {
                      className="w-full h-12 bg-base-950 border border-base-800 rounded-2xl pl-12 pr-4 text-[10px] font-black text-base-50 uppercase tracking-[0.2em] outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20 transition-all placeholder:text-base-800 shadow-inner"
                    />
                </div>
-               <Button variant="secondary" size="md" className="h-12 w-12 p-0 border border-base-800">
+               <Button variant="secondary" size="md" className="h-12 w-12 p-0 border border-base-800" aria-label="Filter audit logs">
                   <Filter size={18} />
                </Button>
             </div>

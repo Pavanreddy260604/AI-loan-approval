@@ -94,48 +94,83 @@ interface FetchOptions {
   headers?: Record<string, string>;
   method?: string;
   rawBody?: any;
+  retries?: number;
 }
 
-export async function apiFetch<T = any>(path: string, { token, body, headers, method = "GET", rawBody }: FetchOptions = {}): Promise<T> {
-  try {
-    const isAuthRoute = path.startsWith("/auth/");
-    const session = getSession();
-    const effectiveToken = token || session?.token;
+async function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
-    if (!effectiveToken && !isAuthRoute && method !== "GET") {
-      throw new Error("Authentication session expired. Please sign in again.");
-    }
+export async function apiFetch<T = any>(
+  path: string,
+  { token, body, headers, method = "GET", rawBody, retries = 2 }: FetchOptions = {}
+): Promise<T> {
+  const isAuthRoute = path.startsWith("/auth/");
+  const session = getSession();
+  const effectiveToken = token || session?.token;
 
-    const response = await fetch(`${API_BASE}${path}`, {
-      method,
-      headers: {
-        ...(rawBody ? {} : { "Content-Type": "application/json" }),
-        ...(effectiveToken ? { Authorization: `Bearer ${effectiveToken}` } : {}),
-        ...(headers || {}),
-      },
-      body: rawBody ?? (body ? JSON.stringify(body) : undefined),
-    });
-
-    const contentType = response.headers.get("content-type") || "";
-    let payload: any;
-    try {
-      payload = contentType.includes("application/json") ? await response.json() : await response.text();
-    } catch (e) {
-      payload = null;
-    }
-
-    if (!response.ok) {
-      if (response.status === 401 && !path.includes("/auth")) {
-        clearSession();
-        window.location.href = "/auth";
-      }
-      throw new Error(extractErrorMessage(payload) || `Server error (${response.status})`);
-    }
-    return payload;
-  } catch (err: any) {
-    if (err.name === "TypeError" && err.message === "Failed to fetch") {
-      throw new Error("Unable to connect to the server. Please check your connection or wait for services to start.");
-    }
-    throw err;
+  if (!effectiveToken && !isAuthRoute && method !== "GET") {
+    throw new Error("Authentication session expired. Please sign in again.");
   }
+
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const response = await fetch(`${API_BASE}${path}`, {
+        method,
+        headers: {
+          ...(rawBody ? {} : { "Content-Type": "application/json" }),
+          ...(effectiveToken ? { Authorization: `Bearer ${effectiveToken}` } : {}),
+          ...(headers || {}),
+        },
+        body: rawBody ?? (body ? JSON.stringify(body) : undefined),
+      });
+
+      const contentType = response.headers.get("content-type") || "";
+      let payload: any;
+      try {
+        payload = contentType.includes("application/json") ? await response.json() : await response.text();
+      } catch {
+        payload = null;
+      }
+
+      if (!response.ok) {
+        if (response.status === 401 && !path.includes("/auth")) {
+          clearSession();
+          window.location.href = "/auth";
+          throw new Error("Session expired. Redirecting to login.");
+        }
+
+        // Don't retry client errors (4xx) except 408/429
+        if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {
+          throw new Error(extractErrorMessage(payload) || `Server error (${response.status})`);
+        }
+
+        // Retry server errors (5xx) and 408/429
+        lastError = new Error(extractErrorMessage(payload) || `Server error (${response.status})`);
+        if (attempt < retries) {
+          await sleep(Math.min(1000 * Math.pow(2, attempt), 4000));
+          continue;
+        }
+        throw lastError;
+      }
+
+      return payload;
+    } catch (err: any) {
+      if (err.message?.includes("Session expired")) throw err;
+
+      if (err.name === "TypeError" && err.message === "Failed to fetch") {
+        lastError = new Error("Unable to connect to the server. Please check your connection or wait for services to start.");
+        if (attempt < retries) {
+          await sleep(Math.min(1000 * Math.pow(2, attempt), 4000));
+          continue;
+        }
+        throw lastError;
+      }
+      throw err;
+    }
+  }
+
+  throw lastError || new Error("Request failed");
 }

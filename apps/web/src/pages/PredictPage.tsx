@@ -18,12 +18,13 @@ import {
   ChevronRight
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { 
-  EliteCard as Card, 
-  EliteButton as Button, 
-  EliteInput as Input, 
-  EliteBadge as Badge, 
-  EliteSelect as Select
+import {
+  EliteCard as Card,
+  EliteButton as Button,
+  EliteInput as Input,
+  EliteBadge as Badge,
+  EliteSelect as Select,
+  EliteInlineError as InlineError
 } from "../components/ui";
 import { apiFetch, toGatewayUrl } from "../lib/api";
 import { type AuthContextValue } from "../App";
@@ -301,6 +302,11 @@ export function PredictPage({ auth }: { auth: AuthContextValue }) {
                       </AnimatePresence>
                    </div>
 
+                   {singleMutation.isError && (
+                     <div className="mb-4">
+                       <InlineError message={(singleMutation.error as Error).message} />
+                     </div>
+                   )}
                    {singleMutation.isSuccess ? (
                       <div className="space-y-12 relative z-10">
                          <div className="flex flex-col">
@@ -406,7 +412,7 @@ export function PredictPage({ auth }: { auth: AuthContextValue }) {
                    if (file) batchMutation.mutate({ file, datasetId: selectedDatasetId });
                 }}>
                    <label className="p-16 border-2 border-dashed border-base-800 rounded-pro-lg hover:border-primary/40 focus-within:border-primary/60 transition-all group cursor-pointer relative block bg-base-950/30">
-                      <input type="file" name="file" className="absolute inset-0 opacity-0 cursor-pointer z-10" />
+                      <input type="file" name="file" className="absolute inset-0 opacity-0 cursor-pointer z-10" aria-label="Upload batch prediction file" />
                       <div className="space-y-3">
                          <div className="h-10 w-10 bg-base-800 rounded-full flex items-center justify-center mx-auto group-hover:bg-primary/20 transition-colors">
                             <Upload size={20} className="text-base-400 group-hover:text-primary transition-colors" />
@@ -428,6 +434,10 @@ export function PredictPage({ auth }: { auth: AuthContextValue }) {
                    </Button>
                 </form>
              </Card>
+
+             {batchMutation.isError && (
+               <InlineError message={(batchMutation.error as Error).message} />
+             )}
 
              {currentBatchJob && (
                 <Card border padded className="space-y-8 border-primary/20 bg-primary/5 shadow-2xl animate-in zoom-in-95">

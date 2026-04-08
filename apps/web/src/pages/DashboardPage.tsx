@@ -19,7 +19,8 @@ import {
   FrictionGate,
   Table,
   type TableColumn,
-  EliteSkeletonLoader as SkeletonLoader
+  EliteSkeletonLoader as SkeletonLoader,
+  EliteInlineError as InlineError
 } from "../components/ui";
 import { apiFetch, type DashboardResponse } from "../lib/api";
 import { useKeyboardActions } from "../hooks/useKeyboardActions";
@@ -29,7 +30,7 @@ import { type AuthContextValue } from "../App";
 export function DashboardPage(_props: { auth: AuthContextValue }) {
   const { addAction } = useUndo();
   
-  const { isLoading } = useQuery<DashboardResponse>({
+  const { isLoading, error } = useQuery<DashboardResponse>({
     queryKey: ["dashboard"],
     queryFn: () => apiFetch("/dashboard"),
     refetchInterval: 30000,
@@ -154,6 +155,10 @@ export function DashboardPage(_props: { auth: AuthContextValue }) {
     );
   }
 
+  if (error) {
+    return <InlineError message={(error as Error).message} />;
+  }
+
   return (
     <div className="space-y-8 Decision-Engine-Animate">
       {/* ⚠️ Attention Required: Strategic Header */}
@@ -198,28 +203,35 @@ export function DashboardPage(_props: { auth: AuthContextValue }) {
         <div className="flex items-center justify-between">
            <h2 className="text-xl font-bold tracking-tight">Pending Loans</h2>
            <div className="flex items-center gap-2">
-              <Button variant="outline" size="xs" leftIcon={<Search size={12} />}>
+              <Button variant="outline" size="xs" leftIcon={<Search size={12} />} aria-label="Search loans">
                 Search Loans
               </Button>
-              <Button variant="outline" size="xs" leftIcon={<Filter size={12} />}>
+              <Button variant="outline" size="xs" leftIcon={<Filter size={12} />} aria-label="Filter loans">
                 Filter
               </Button>
            </div>
         </div>
 
-        <Table 
-          data={queue} 
-          columns={columns}
-          loading={isLoading}
-          pagination={{
-            currentPage: 1,
-            totalPages: 1,
-            pageSize: 10,
-            totalItems: queue.length,
-            onPageChange: () => {},
-          }}
-          onRowClick={(_row, idx) => setSelectedIndex(idx)}
-        />
+        {queue.length === 0 ? (
+          <div className="py-16 text-center border border-base-800 rounded-lg bg-base-900/20">
+            <p className="text-sm text-base-400">No pending loan applications.</p>
+            <p className="text-xs text-base-600 mt-1">New applications will appear here automatically.</p>
+          </div>
+        ) : (
+          <Table
+            data={queue}
+            columns={columns}
+            loading={isLoading}
+            pagination={{
+              currentPage: 1,
+              totalPages: 1,
+              pageSize: 10,
+              totalItems: queue.length,
+              onPageChange: () => {},
+            }}
+            onRowClick={(_row, idx) => setSelectedIndex(idx)}
+          />
+        )}
       </div>
 
       {/* Grid Layer: Secondary Activity */}
@@ -285,15 +297,15 @@ export function DashboardPage(_props: { auth: AuthContextValue }) {
          <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest">
             <span className="px-1.5 py-0.5 bg-base-900 border border-base-800 rounded">J</span>
             <span className="px-1.5 py-0.5 bg-base-900 border border-base-800 rounded">K</span>
-            <span className="text-base-600 ml-1">Navigate</span>
+            <span className="text-base-400 ml-1">Navigate</span>
          </div>
          <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest">
             <span className="px-1.5 py-0.5 bg-base-900 border border-base-800 rounded">A</span>
-            <span className="text-base-600 ml-1">Approve</span>
+            <span className="text-base-400 ml-1">Approve</span>
          </div>
          <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest">
             <span className="px-1.5 py-0.5 bg-base-900 border border-base-800 rounded">R</span>
-            <span className="text-base-600 ml-1">Reject</span>
+            <span className="text-base-400 ml-1">Reject</span>
          </div>
       </div>
     </div>

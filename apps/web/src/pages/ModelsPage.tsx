@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useDeferredValue } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { 
@@ -11,14 +11,15 @@ import {
   Search
 } from "lucide-react";
 import { 
-  EliteCard as Card, 
-  EliteButton as Button, 
+  EliteCard as Card,
+  EliteButton as Button,
   EliteBadge as Badge,
   EliteSelect as Select,
   ShinyMetricCard,
   Table,
   type TableColumn,
-  EliteSkeletonLoader as SkeletonLoader
+  EliteSkeletonLoader as SkeletonLoader,
+  EliteInlineError as InlineError
 } from "../components/ui";
 import { apiFetch } from "../lib/api";
 import { type AuthContextValue } from "../App";
@@ -34,6 +35,7 @@ export function ModelsPage({ auth }: { auth: AuthContextValue }) {
   const queryClient = useQueryClient();
   const [pinSelections, setPinSelections] = useState<Record<string, string>>({});
   const [modelSearch, setModelSearch] = useState("");
+  const deferredSearch = useDeferredValue(modelSearch);
   const [openSelectId, setOpenSelectId] = useState<string | null>(null);
 
   const models = useQuery<Model[]>({
@@ -67,12 +69,12 @@ export function ModelsPage({ auth }: { auth: AuthContextValue }) {
   });
 
   const filteredModels = useMemo(() => {
-    const search = modelSearch.trim().toLowerCase();
+    const search = deferredSearch.trim().toLowerCase();
     if (!search) return models.data ?? [];
-    return (models.data ?? []).filter((m) => 
+    return (models.data ?? []).filter((m) =>
       (m.championFamily || "").toLowerCase().includes(search) || m.id.toLowerCase().includes(search)
     );
-  }, [modelSearch, models.data]);
+  }, [deferredSearch, models.data]);
 
   const stats = useMemo(() => {
     const data = models.data || [];
@@ -186,6 +188,10 @@ export function ModelsPage({ auth }: { auth: AuthContextValue }) {
     },
   ];
 
+  if (models.error) {
+    return <InlineError message={(models.error as Error).message} />;
+  }
+
   if (models.isLoading) {
      return (
        <div className="py-8 space-y-8">
@@ -239,20 +245,29 @@ export function ModelsPage({ auth }: { auth: AuthContextValue }) {
              <h2 className="text-xl font-bold tracking-tight">Available Models</h2>
              <div className="flex items-center gap-2 px-3 py-1.5 bg-base-900 border border-base-800 rounded-pro text-[10px] font-bold text-base-500 hover:text-base-300 transition-colors">
                 <Search size={14} className="mr-2" /> 
-                <input 
-                  placeholder="Search models..." 
-                  className="bg-transparent border-none text-[11px] p-0 focus:ring-0 w-32 outline-none" 
-                  onChange={(e) => setModelSearch(e.target.value)} 
+                <input
+                  placeholder="Search models..."
+                  className="bg-transparent border-none text-[11px] p-0 focus:ring-0 w-32 outline-none"
+                  onChange={(e) => setModelSearch(e.target.value)}
+                  aria-label="Search models"
                 />
              </div>
           </div>
 
-         <Table 
-            data={filteredModels} 
+         <Table
+            data={filteredModels}
             columns={modelColumns}
             loading={models.isLoading}
             className="shadow-2xl"
          />
+         {filteredModels.length === 0 && !models.isLoading && (
+           <div className="py-16 text-center border border-base-800 rounded-lg bg-base-900/20">
+             <p className="text-sm text-base-400">No models found.</p>
+             <p className="text-xs text-base-600 mt-1">
+               {modelSearch ? "Try a different search term." : "Train a model from the Datasets page to get started."}
+             </p>
+           </div>
+         )}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
