@@ -234,6 +234,35 @@ export const dashboardModelSchema = z.object({
 
 export type DashboardModel = z.infer<typeof dashboardModelSchema>;
 
+export const pendingPredictionSchema = z.object({
+  id: z.string().uuid(),
+  datasetId: z.string().uuid().nullable().default(null),
+  modelVersionId: z.string().uuid().nullable().default(null),
+  decision: z.boolean().nullable().default(null),
+  probability: z.number().default(0),
+  features: z.record(z.any()).default({}),
+  fraudScore: z.number().nullable().default(null),
+  fraudSignals: z.any().nullable().default(null),
+  explanation: z.any().nullable().default(null),
+  reviewStatus: z.string().default("pending"),
+  createdAt: z.string().nullable().default(null),
+});
+
+export type PendingPrediction = z.infer<typeof pendingPredictionSchema>;
+
+export const recentDecisionSchema = z.object({
+  id: z.string().uuid(),
+  decision: z.boolean().nullable().default(null),
+  probability: z.number().default(0),
+  reviewStatus: z.string(),
+  reviewedBy: z.string().uuid().nullable().default(null),
+  reviewedAt: z.string().nullable().default(null),
+  features: z.record(z.any()).default({}),
+  createdAt: z.string().nullable().default(null),
+});
+
+export type RecentDecision = z.infer<typeof recentDecisionSchema>;
+
 export const dashboardResponseSchema = z.object({
   analytics: z.object({
     metrics: dashboardMetricsSchema,
@@ -242,6 +271,8 @@ export const dashboardResponseSchema = z.object({
   balance: billingBalanceSchema,
   datasets: z.array(dashboardDatasetSchema).default([]),
   models: z.array(dashboardModelSchema).default([]),
+  pendingPredictions: z.array(pendingPredictionSchema).default([]),
+  recentDecisions: z.array(recentDecisionSchema).default([]),
 });
 
 export type DashboardResponse = z.infer<typeof dashboardResponseSchema>;

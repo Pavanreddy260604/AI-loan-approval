@@ -467,7 +467,7 @@ app.get("/api/v1/me", authenticate, async (req: AuthenticatedRequest, res) => {
 
 app.get("/api/v1/dashboard", authenticate, async (req: AuthenticatedRequest, res) => {
   try {
-    const [analytics, datasets, models] = await Promise.all([
+    const [analytics, datasets, models, pendingPredictions, recentDecisions] = await Promise.all([
       safeServiceJson(`${env.ANALYTICS_SERVICE_URL}/internal/analytics/tenant/${req.user!.tenantId}`, {
         headers: { Authorization: req.headers.authorization },
       }),
@@ -477,6 +477,8 @@ app.get("/api/v1/dashboard", authenticate, async (req: AuthenticatedRequest, res
       safeServiceJson(`${env.TRAINING_SERVICE_URL}/internal/models?tenantId=${req.user!.tenantId}`, {
         headers: { Authorization: req.headers.authorization },
       }, []),
+      safeServiceJson(`${env.PREDICTION_SERVICE_URL}/internal/predictions/pending?tenantId=${req.user!.tenantId}`),
+      safeServiceJson(`${env.PREDICTION_SERVICE_URL}/internal/predictions/recent-decisions?tenantId=${req.user!.tenantId}`),
     ]);
 
     const dashboardResponse = {
@@ -498,6 +500,8 @@ app.get("/api/v1/dashboard", authenticate, async (req: AuthenticatedRequest, res
       balance: UNLIMITED_BALANCE,
       datasets: (Array.isArray(datasets.body) ? datasets.body : []).map(normalizeDataset),
       models: (Array.isArray(models.body) ? models.body : []).map(normalizeModel),
+      pendingPredictions: Array.isArray(pendingPredictions.body) ? pendingPredictions.body : [],
+      recentDecisions: Array.isArray(recentDecisions.body) ? recentDecisions.body : [],
     };
 
     // Granular Validation to catch future schema drift
@@ -949,6 +953,35 @@ app.get("/api/v1/predictions/:predictionId", authenticate, async (req: Authentic
     }
     console.error(error);
     res.status(502).json({ error: "Unable to fetch prediction details." });
+  }
+});
+
+app.post("/api/v1/predictions/:predictionId/decision", authenticate, async (req: AuthenticatedRequest, res) => {
+  try {
+    const predictionId = z.string().uuid().safeParse(req.params.predictionId);
+    if (!predictionId.success) return res.status(400).json({ error: "Invalid prediction ID format." });
+
+    const { decision } = req.body;
+    if (!decision || !["approve", "reject"].includes(decision)) {
+      return res.status(400).json({ error: "Decision must be 'approve' or 'reject'." });
+    }
+
+    const { response, body } = await serviceJson(`${env.PREDICTION_SERVICE_URL}/internal/predictions/${predictionId.data}/decision`, {
+      method: "POST",
+      headers: { Authorization: req.headers.authorization },
+      body: JSON.stringify({
+        decision,
+        userId: req.user!.id,
+        tenantId: req.user!.tenantId,
+      }),
+    });
+    res.status(response.status).json(body);
+  } catch (error) {
+    if (isOfflineError(error)) {
+      return res.status(503).json({ error: "AI Prediction service is offline." });
+    }
+    console.error(error);
+    res.status(502).json({ error: "Unable to submit prediction decision." });
   }
 });
 

@@ -18,7 +18,7 @@ import requests
 import torch
 import json
 import jwt
-from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile, Request
+from fastapi import FastAPI, File, Form, Header, HTTPException, Query, UploadFile, Request
 from fastapi.responses import Response
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
@@ -233,6 +233,35 @@ def init_db() -> None:
             );
             """
         )
+        cur.execute(
+            """
+            ALTER TABLE predictions
+            ADD COLUMN IF NOT EXISTS review_status TEXT NOT NULL DEFAULT 'pending'
+            """
+        )
+        cur.execute(
+            """
+            ALTER TABLE predictions
+            ADD COLUMN IF NOT EXISTS reviewed_by UUID
+            """
+        )
+        cur.execute(
+            """
+            ALTER TABLE predictions
+            ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ
+            """
+        )
+        cur.execute(
+            """
+            UPDATE predictions
+            SET review_status = CASE WHEN decision = true THEN 'auto_approved' ELSE 'auto_rejected' END
+            WHERE review_status = 'pending'
+              AND decision IS NOT NULL
+              AND reviewed_at IS NULL
+              AND created_at < NOW() - INTERVAL '1 minute'
+            """
+        )
+
 def ensure_bucket(bucket: str) -> None:
     client = s3_client()
     existing = [item["Name"] for item in client.list_buckets().get("Buckets", [])]
@@ -1113,6 +1142,43 @@ def get_prediction_audit_logs(authorization: str | None = Header(None)) -> list[
         return keys_to_camel(rows)
 
 
+@app.get("/internal/predictions/pending")
+def get_pending_predictions(tenantId: str = Query(...)):
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT id, dataset_id, model_version_id, decision, probability,
+                   features, fraud_score, fraud, explanation,
+                   review_status, created_at
+            FROM predictions
+            WHERE tenant_id = %s AND review_status = 'pending'
+            ORDER BY created_at DESC
+            LIMIT 50
+            """,
+            (tenantId,),
+        )
+        rows = cur.fetchall()
+    return keys_to_camel(rows)
+
+
+@app.get("/internal/predictions/recent-decisions")
+def get_recent_decisions(tenantId: str = Query(...)):
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT id, decision, probability, review_status,
+                   reviewed_by, reviewed_at, features, created_at
+            FROM predictions
+            WHERE tenant_id = %s AND review_status IN ('approved', 'rejected')
+            ORDER BY reviewed_at DESC
+            LIMIT 10
+            """,
+            (tenantId,),
+        )
+        rows = cur.fetchall()
+    return keys_to_camel(rows)
+
+
 @app.get("/internal/predictions/{prediction_id}")
 def get_prediction(prediction_id: UUID, authorization: str | None = Header(None)) -> dict:
     claims = verify_access(authorization)
@@ -1143,3 +1209,31 @@ def get_prediction(prediction_id: UUID, authorization: str | None = Header(None)
             "fraudScore": float(prediction["fraud_score"]) if prediction["fraud_score"] else None,
             "createdAt": prediction["created_at"].isoformat(),
         })
+
+
+@app.post("/internal/predictions/{prediction_id}/decision")
+def submit_decision(prediction_id: str, payload: dict):
+    decision_type = payload.get("decision")
+    user_id = payload.get("userId")
+    tenant_id = payload.get("tenantId")
+
+    if decision_type not in ("approve", "reject"):
+        raise HTTPException(status_code=400, detail="decision must be 'approve' or 'reject'")
+
+    review_status = "approved" if decision_type == "approve" else "rejected"
+
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE predictions
+            SET review_status = %s, reviewed_by = %s, reviewed_at = NOW()
+            WHERE id = %s AND tenant_id = %s
+            RETURNING id, review_status
+            """,
+            (review_status, user_id, prediction_id, tenant_id),
+        )
+        result = cur.fetchone()
+
+    if not result:
+        raise HTTPException(status_code=404, detail="Prediction not found")
+    return keys_to_camel(result)

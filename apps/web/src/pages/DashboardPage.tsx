@@ -1,65 +1,168 @@
-import { useState } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
-import { 
-  AlertCircle, 
-  TrendingDown, 
-  Clock, 
-  CheckCircle2, 
-  XCircle, 
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  AlertCircle,
+  TrendingUp,
+  Clock,
+  CheckCircle2,
+  XCircle,
   Search,
   Filter,
-  Info
+  Info,
+  Database,
+  Brain,
+  Activity,
+  ShieldAlert
 } from "lucide-react";
-import { 
-  EliteCard as Card, 
-  EliteBadge as Badge, 
-  EliteButton as Button, 
-  RiskTag, 
+import {
+  EliteCard as Card,
+  EliteBadge as Badge,
+  EliteButton as Button,
+  RiskTag,
   FrictionGate,
   Table,
   type TableColumn,
   EliteSkeletonLoader as SkeletonLoader,
   EliteInlineError as InlineError
 } from "../components/ui";
-import { apiFetch, type DashboardResponse } from "../lib/api";
+import { apiFetch, type DashboardResponse, type PendingPrediction } from "../lib/api";
 import { useKeyboardActions } from "../hooks/useKeyboardActions";
 import { useUndo } from "../lib/undo-provider";
 import { type AuthContextValue } from "../App";
 
+// Helpers
+function formatCurrency(value: number | string | undefined): string {
+  if (value === undefined || value === null) return "$0";
+  const num = typeof value === "string" ? parseFloat(value) : value;
+  if (isNaN(num)) return "$0";
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(num);
+}
+
+function timeAgo(dateStr: string | null | undefined): string {
+  if (!dateStr) return "just now";
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
+
+function deriveLoanName(features: Record<string, any>): string {
+  // Try common field names for a human-readable label
+  const nameKeys = ["loan_type", "purpose", "loan_purpose", "product", "description", "name", "applicant_name"];
+  for (const key of nameKeys) {
+    if (features[key] && typeof features[key] === "string") {
+      return features[key];
+    }
+  }
+  // Fallback: show first string feature
+  for (const val of Object.values(features)) {
+    if (typeof val === "string" && val.length > 2 && val.length < 60) return val;
+  }
+  return "Loan Application";
+}
+
+function deriveLoanAmount(features: Record<string, any>): number {
+  const amountKeys = ["loan_amount", "amount", "loan_amnt", "funded_amnt", "total_amount", "principal", "credit_amount"];
+  for (const key of amountKeys) {
+    const val = features[key];
+    if (val !== undefined && val !== null) {
+      const num = typeof val === "string" ? parseFloat(val) : val;
+      if (!isNaN(num) && num > 0) return num;
+    }
+  }
+  return 0;
+}
+
+function deriveRiskScore(prediction: PendingPrediction): number {
+  // fraud score if available (0-100), otherwise invert probability for rejected loans
+  if (prediction.fraudScore !== null && prediction.fraudScore !== undefined) {
+    return Math.round(prediction.fraudScore * 100);
+  }
+  // If the model says "reject" (decision=false), risk = high
+  if (prediction.decision === false) {
+    return Math.round((1 - prediction.probability) * 100);
+  }
+  // If approved, risk = inverse of probability
+  return Math.round((1 - prediction.probability) * 100);
+}
+
+// Queue item for the table
+interface QueueItem {
+  id: string;
+  name: string;
+  amount: string;
+  risk: number;
+  confidence: number;
+  time: string;
+  raw: PendingPrediction;
+}
+
+function predictionToQueueItem(p: PendingPrediction): QueueItem {
+  return {
+    id: p.id,
+    name: deriveLoanName(p.features),
+    amount: formatCurrency(deriveLoanAmount(p.features)),
+    risk: deriveRiskScore(p),
+    confidence: Math.round(p.probability * 100),
+    time: timeAgo(p.createdAt),
+    raw: p,
+  };
+}
+
 export function DashboardPage(_props: { auth: AuthContextValue }) {
   const { addAction } = useUndo();
-  
-  const { isLoading, error } = useQuery<DashboardResponse>({
+  const queryClient = useQueryClient();
+
+  const { data, isLoading, error } = useQuery<DashboardResponse>({
     queryKey: ["dashboard"],
     queryFn: () => apiFetch("/dashboard"),
     refetchInterval: 30000,
   });
 
-  // Action Queue Mock Data (Representing Pending Decisions)
-  const [queue, setQueue] = useState([
-    { id: "1", name: "Corporate Real Estate Loan", amount: "$240,000", risk: 82, confidence: 91, time: "4m ago" },
-    { id: "2", name: "SME Working Capital", amount: "$45,000", risk: 42, confidence: 68, time: "12m ago" },
-    { id: "3", name: "Heavy Equipment Lease", amount: "$112,500", risk: 18, confidence: 94, time: "18m ago" },
-    { id: "4", name: "Direct Consumer Credit", amount: "$8,000", risk: 65, confidence: 92, time: "24m ago" },
-    { id: "5", name: "Agricultural Asset Finance", amount: "$320,000", risk: 55, confidence: 42, time: "31m ago" },
-  ]);
+  // Local queue state for optimistic updates (remove on approve/reject, restore on undo)
+  const [queue, setQueue] = useState<QueueItem[]>([]);
+  const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set());
 
-  const handleDecision = (loan: any, type: "approve" | "reject") => {
+  // Sync API data into local queue when data changes
+  useEffect(() => {
+    if (data?.pendingPredictions) {
+      const items = data.pendingPredictions
+        .filter((p) => !dismissedIds.has(p.id))
+        .map(predictionToQueueItem);
+      setQueue(items);
+    }
+  }, [data?.pendingPredictions, dismissedIds]);
+
+  const handleDecision = (loan: QueueItem, type: "approve" | "reject") => {
     const message = type === "approve" ? `Approved ${loan.name}` : `Rejected ${loan.name}`;
-    
+
     addAction(
       message,
       async () => {
-        // Real API call here: await apiFetch(`/loans/${loan.id}/decision`, { method: "POST", body: { type } });
-        console.log(`Executing ${type} on ${loan.id}`);
+        await apiFetch(`/predictions/${loan.id}/decision`, {
+          method: "POST",
+          body: { decision: type },
+        });
+        // Refresh dashboard after decision
+        queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       },
       () => {
-        setQueue((curr) => [loan, ...curr]);
+        // Undo: restore item, remove from dismissed
+        setDismissedIds((curr) => {
+          const next = new Set(curr);
+          next.delete(loan.id);
+          return next;
+        });
       }
     );
 
+    // Optimistic: remove from queue, add to dismissed
     setQueue((curr) => curr.filter((l) => l.id !== loan.id));
+    setDismissedIds((curr) => new Set(curr).add(loan.id));
   };
 
   const { setSelectedIndex } = useKeyboardActions(
@@ -67,19 +170,33 @@ export function DashboardPage(_props: { auth: AuthContextValue }) {
     (item, type) => handleDecision(item, type)
   );
 
+  // Derived metrics from real data
+  const metrics = data?.analytics?.metrics;
+  const models = data?.models ?? [];
+  const recentDecisions = data?.recentDecisions ?? [];
   const highRiskCount = queue.filter(l => l.risk > 70).length;
 
-  // Table Row Type
-  interface QueueItem {
-    id: string;
-    name: string;
-    amount: string;
-    risk: number;
-    confidence: number;
-    time: string;
-  }
+  // Best model metrics
+  const activeModel = useMemo(() => {
+    if (!models.length) return null;
+    return models.reduce((best, m) =>
+      (m.championMetrics?.accuracy ?? 0) > (best.championMetrics?.accuracy ?? 0) ? m : best
+    , models[0]);
+  }, [models]);
 
-  // Table Column Definitions
+  const avgWaitTime = useMemo(() => {
+    if (!data?.pendingPredictions?.length) return "—";
+    const now = Date.now();
+    const totalMs = data.pendingPredictions.reduce((sum, p) => {
+      return sum + (p.createdAt ? now - new Date(p.createdAt).getTime() : 0);
+    }, 0);
+    const avgMins = Math.round(totalMs / data.pendingPredictions.length / 60000);
+    if (avgMins < 1) return "<1m";
+    if (avgMins < 60) return `${avgMins}m`;
+    return `${Math.round(avgMins / 60)}h`;
+  }, [data?.pendingPredictions]);
+
+  // Table columns
   const columns: TableColumn<QueueItem>[] = [
     {
       header: 'Application',
@@ -87,7 +204,7 @@ export function DashboardPage(_props: { auth: AuthContextValue }) {
       render: (row: QueueItem) => (
         <div className="flex flex-col">
           <span className="text-sm font-bold text-base-50">{row.name}</span>
-          <span className="text-[10px] text-base-600 font-mono tracking-tighter uppercase">PN-{row.id}0482-X</span>
+          <span className="text-[10px] text-base-600 font-mono tracking-tighter uppercase">{row.id.slice(0, 8)}</span>
         </div>
       ),
     },
@@ -161,7 +278,7 @@ export function DashboardPage(_props: { auth: AuthContextValue }) {
 
   return (
     <div className="space-y-8 Decision-Engine-Animate">
-      {/* ⚠️ Attention Required: Strategic Header */}
+      {/* KPI Cards — Real Data */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-0 border border-base-800 rounded-lg overflow-hidden shadow-2xl">
         <Card className="rounded-none border-0 bg-danger/5" padded={true}>
           <div className="flex items-center gap-3">
@@ -170,18 +287,20 @@ export function DashboardPage(_props: { auth: AuthContextValue }) {
              </div>
              <div>
                 <span className="text-[10px] font-bold text-danger uppercase tracking-widest leading-none">High Priority</span>
-                <p className="text-xl font-bold text-base-50 tracking-tight">{highRiskCount} High-Risk Loans</p>
+                <p className="text-xl font-bold text-base-50 tracking-tight">
+                  {highRiskCount > 0 ? `${highRiskCount} High-Risk` : "No High-Risk"} {highRiskCount === 1 ? "Loan" : "Loans"}
+                </p>
              </div>
           </div>
         </Card>
-        <Card className="rounded-none border-y-0 border-x border-base-800 bg-warning/5" padded={true}>
+        <Card className="rounded-none border-y-0 border-x border-base-800 bg-primary/5" padded={true}>
           <div className="flex items-center gap-3">
-             <div className="h-10 w-10 rounded bg-warning/10 border border-warning/20 flex items-center justify-center text-warning shrink-0">
-                <TrendingDown size={20} />
+             <div className="h-10 w-10 rounded bg-primary/10 border border-primary/20 flex items-center justify-center text-primary shrink-0">
+                <TrendingUp size={20} />
              </div>
              <div>
-                <span className="text-[10px] font-bold text-warning uppercase tracking-widest leading-none">Accuracy Trend</span>
-                <p className="text-xl font-bold text-base-50 tracking-tight">-12% Accuracy Change</p>
+                <span className="text-[10px] font-bold text-primary uppercase tracking-widest leading-none">Total Predictions</span>
+                <p className="text-xl font-bold text-base-50 tracking-tight">{metrics?.totalPredictions ?? 0} Scored</p>
              </div>
           </div>
         </Card>
@@ -191,14 +310,38 @@ export function DashboardPage(_props: { auth: AuthContextValue }) {
                 <Clock size={20} />
              </div>
              <div>
-                <span className="text-[10px] font-bold text-base-500 uppercase tracking-widest leading-none">Response Speed</span>
-                <p className="text-xl font-bold text-base-50 tracking-tight">4m Avg Wait</p>
+                <span className="text-[10px] font-bold text-base-500 uppercase tracking-widest leading-none">Avg Wait Time</span>
+                <p className="text-xl font-bold text-base-50 tracking-tight">{avgWaitTime} Avg Wait</p>
              </div>
           </div>
         </Card>
       </div>
 
-      {/* Action Queue: The Decision Engine */}
+      {/* Platform Stats */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <Card border={true} padded={true} className="text-center">
+          <Database size={16} className="mx-auto text-primary mb-2" />
+          <p className="text-lg font-bold text-base-50 tabular-nums">{metrics?.totalDatasets ?? 0}</p>
+          <p className="text-[9px] font-bold text-base-600 uppercase tracking-widest">Datasets</p>
+        </Card>
+        <Card border={true} padded={true} className="text-center">
+          <Brain size={16} className="mx-auto text-primary mb-2" />
+          <p className="text-lg font-bold text-base-50 tabular-nums">{metrics?.totalModels ?? 0}</p>
+          <p className="text-[9px] font-bold text-base-600 uppercase tracking-widest">Models</p>
+        </Card>
+        <Card border={true} padded={true} className="text-center">
+          <Activity size={16} className="mx-auto text-primary mb-2" />
+          <p className="text-lg font-bold text-base-50 tabular-nums">{queue.length}</p>
+          <p className="text-[9px] font-bold text-base-600 uppercase tracking-widest">Pending Review</p>
+        </Card>
+        <Card border={true} padded={true} className="text-center">
+          <ShieldAlert size={16} className="mx-auto text-warning mb-2" />
+          <p className="text-lg font-bold text-base-50 tabular-nums">{metrics?.fraudAlerts ?? 0}</p>
+          <p className="text-[9px] font-bold text-base-600 uppercase tracking-widest">Fraud Alerts</p>
+        </Card>
+      </div>
+
+      {/* Pending Loans Queue */}
       <div className="space-y-4">
         <div className="flex items-center justify-between">
            <h2 className="text-xl font-bold tracking-tight">Pending Loans</h2>
@@ -215,7 +358,7 @@ export function DashboardPage(_props: { auth: AuthContextValue }) {
         {queue.length === 0 ? (
           <div className="py-16 text-center border border-base-800 rounded-lg bg-base-900/20">
             <p className="text-sm text-base-400">No pending loan applications.</p>
-            <p className="text-xs text-base-600 mt-1">New applications will appear here automatically.</p>
+            <p className="text-xs text-base-600 mt-1">Run predictions from the Predict page to see them here.</p>
           </div>
         ) : (
           <Table
@@ -234,33 +377,51 @@ export function DashboardPage(_props: { auth: AuthContextValue }) {
         )}
       </div>
 
-      {/* Grid Layer: Secondary Activity */}
+      {/* Model Performance + Recent Decisions */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <Card border={true} padded={false} className="lg:col-span-2">
            <div className="p-6 border-b border-base-800 flex items-center justify-between">
-              <h3 className="font-bold tracking-tight">Active Model (Performance)</h3>
-              <Badge tone="success">Operational</Badge>
+              <h3 className="font-bold tracking-tight">Active Model Performance</h3>
+              {activeModel ? (
+                <Badge tone="success">{activeModel.championFamily || "Default"}</Badge>
+              ) : (
+                <Badge tone="neutral">No Models</Badge>
+              )}
            </div>
-           <div className="p-8 h-48 flex items-center justify-center border-b border-base-800 bg-[radial-gradient(circle_at_center,rgba(99,91,255,0.05),transparent_70%)]">
-              <div className="text-center space-y-2">
-                 <p className="text-4xl font-bold tracking-tighter text-base-50 tabular-nums">94.2%</p>
-                 <p className="text-[10px] font-bold text-base-600 uppercase tracking-widest">Model Accuracy</p>
-              </div>
-           </div>
-           <div className="grid grid-cols-3 divide-x divide-base-800">
-              <div className="p-4 text-center">
-                 <p className="text-xs font-bold text-base-300">0.82</p>
-                 <p className="text-[8px] font-bold text-base-600 uppercase tracking-widest">F1 Score</p>
-              </div>
-              <div className="p-4 text-center">
-                 <p className="text-xs font-bold text-base-300">0.89</p>
-                 <p className="text-[8px] font-bold text-base-600 uppercase tracking-widest">ROC AUC</p>
-              </div>
-              <div className="p-4 text-center">
-                 <p className="text-xs font-bold text-base-300">12ms</p>
-                 <p className="text-[8px] font-bold text-base-600 uppercase tracking-widest">Speed</p>
-              </div>
-           </div>
+           {activeModel ? (
+             <>
+               <div className="p-8 h-48 flex items-center justify-center border-b border-base-800 bg-[radial-gradient(circle_at_center,rgba(99,91,255,0.05),transparent_70%)]">
+                  <div className="text-center space-y-2">
+                     <p className="text-4xl font-bold tracking-tighter text-base-50 tabular-nums">
+                       {((activeModel.championMetrics?.accuracy ?? 0) * 100).toFixed(1)}%
+                     </p>
+                     <p className="text-[10px] font-bold text-base-600 uppercase tracking-widest">Model Accuracy</p>
+                  </div>
+               </div>
+               <div className="grid grid-cols-3 divide-x divide-base-800">
+                  <div className="p-4 text-center">
+                     <p className="text-xs font-bold text-base-300">{(activeModel.championMetrics?.f1Score ?? 0).toFixed(2)}</p>
+                     <p className="text-[8px] font-bold text-base-600 uppercase tracking-widest">F1 Score</p>
+                  </div>
+                  <div className="p-4 text-center">
+                     <p className="text-xs font-bold text-base-300">{(activeModel.championMetrics?.rocAuc ?? 0).toFixed(2)}</p>
+                     <p className="text-[8px] font-bold text-base-600 uppercase tracking-widest">ROC AUC</p>
+                  </div>
+                  <div className="p-4 text-center">
+                     <p className="text-xs font-bold text-base-300">{(activeModel.championMetrics?.precision ?? 0).toFixed(2)}</p>
+                     <p className="text-[8px] font-bold text-base-600 uppercase tracking-widest">Precision</p>
+                  </div>
+               </div>
+             </>
+           ) : (
+             <div className="p-12 text-center">
+                <p className="text-sm text-base-400">No trained models yet.</p>
+                <p className="text-xs text-base-600 mt-1">Upload a dataset and train a model to see performance metrics.</p>
+                <Link to="/app/datasets">
+                  <Button variant="outline" size="sm" className="mt-4">Upload Dataset</Button>
+                </Link>
+             </div>
+           )}
         </Card>
 
         <Card border={true} padded={false}>
@@ -268,31 +429,37 @@ export function DashboardPage(_props: { auth: AuthContextValue }) {
               <h3 className="font-bold tracking-tight">Recent Decisions</h3>
            </div>
            <div className="p-6 space-y-4">
-              {[
-                { name: "Tesla Finance SA", time: "2m ago", type: "approve" },
-                { name: "High Limit Individual 02", time: "14m ago", type: "reject" },
-                { name: "Blue Horizon Trading", time: "1h ago", type: "approve" },
-              ].map((item, i) => (
-                <div key={i} className="flex items-start gap-3">
-                   <div className={`h-6 w-6 rounded-full flex items-center justify-center shrink-0 ${item.type === 'approve' ? 'bg-success/10 text-success' : 'bg-danger/10 text-danger'}`}>
-                    {item.type === 'approve' ? <CheckCircle2 size={12} /> : <XCircle size={12} />}
-                   </div>
-                   <div className="flex-1 min-w-0">
-                      <p className="text-xs font-bold text-base-50 truncate">{item.type === 'approve' ? 'Approve' : 'Reject'}: {item.name}</p>
-                      <p className="text-[10px] text-base-600">Decision by Officer-12 • {item.time}</p>
-                   </div>
-                </div>
-              ))}
+              {recentDecisions.length === 0 ? (
+                <p className="text-xs text-base-500 text-center py-4">No decisions yet.</p>
+              ) : (
+                recentDecisions.slice(0, 5).map((item) => (
+                  <div key={item.id} className="flex items-start gap-3">
+                     <div className={`h-6 w-6 rounded-full flex items-center justify-center shrink-0 ${item.reviewStatus === 'approved' ? 'bg-success/10 text-success' : 'bg-danger/10 text-danger'}`}>
+                      {item.reviewStatus === 'approved' ? <CheckCircle2 size={12} /> : <XCircle size={12} />}
+                     </div>
+                     <div className="flex-1 min-w-0">
+                        <p className="text-xs font-bold text-base-50 truncate">
+                          {item.reviewStatus === 'approved' ? 'Approved' : 'Rejected'}: {deriveLoanName(item.features)}
+                        </p>
+                        <p className="text-[10px] text-base-600">
+                          {Math.round(item.probability * 100)}% confidence &bull; {timeAgo(item.reviewedAt)}
+                        </p>
+                     </div>
+                  </div>
+                ))
+              )}
            </div>
            <div className="p-4 bg-base-950/50 border-t border-base-800">
-              <Button variant="ghost" size="sm" className="w-full text-[10px] uppercase tracking-widest font-bold">
-                View History
-              </Button>
+              <Link to="/app/admin">
+                <Button variant="ghost" size="sm" className="w-full text-[10px] uppercase tracking-widest font-bold">
+                  View History
+                </Button>
+              </Link>
            </div>
         </Card>
       </div>
 
-      {/* Speed Hints (Power-User Orientation) */}
+      {/* Speed Hints */}
       <div className="flex items-center justify-center gap-6 py-4 opacity-30 hover:opacity-100 transition-opacity">
          <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest">
             <span className="px-1.5 py-0.5 bg-base-900 border border-base-800 rounded">J</span>

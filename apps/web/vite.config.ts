@@ -16,9 +16,7 @@ export default defineConfig({
       interval: 1000,
       ignored: ['**/node_modules/**', '**/.git/**'],
     },
-    hmr: {
-      overlay: false,
-    },
+    hmr: false,
   },
   test: {
     globals: true,

@@ -13,23 +13,67 @@ export interface AuthSession {
   };
 }
 
-export interface AnalyticsMetrics {
-  totalPortfolios: number;
-  totalLoans: number;
-  avgConfidence: number;
-  precisionIndex: number;
-  activeModels: number;
-  driftDetection: number;
-  meanResponseTime: string;
+export interface DashboardMetrics {
+  totalDatasets: number;
+  totalModels: number;
+  totalPredictions: number;
+  creditsUsed: number;
+  fraudAlerts: number;
+  lastTrainingStatus: string | null;
+}
+
+export interface DashboardModel {
+  id: string;
+  datasetId: string;
+  championFamily: string | null;
+  championMetrics: {
+    rocAuc: number;
+    f1Score: number;
+    precision: number;
+    recall: number;
+    accuracy: number;
+  };
+  pinnedVersionId: string | null;
+  lastTrainingStatus: string;
+  lastTrainingError: string | null;
+  updatedAt: string | null;
+}
+
+export interface PendingPrediction {
+  id: string;
+  datasetId: string | null;
+  modelVersionId: string | null;
+  decision: boolean | null;
+  probability: number;
+  features: Record<string, any>;
+  fraudScore: number | null;
+  fraudSignals: any;
+  explanation: any;
+  reviewStatus: string;
+  createdAt: string | null;
+}
+
+export interface RecentDecision {
+  id: string;
+  decision: boolean | null;
+  probability: number;
+  reviewStatus: string;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  features: Record<string, any>;
+  createdAt: string | null;
 }
 
 export interface DashboardResponse {
   analytics: {
-    metrics: AnalyticsMetrics;
-    history: any[];
+    metrics: DashboardMetrics;
+    activities: Array<{ topic: string; payload: any; createdAt: string }>;
   };
-  recentDecisions: any[];
-  systemStatus: "HEALTHY" | "DEGRADED" | "UNHEALTHY";
+  balance: { tenantId: string; balance: number; reserved: number; available: number; used: number };
+  datasets: Array<{ id: string; fileName: string; status: string; rowCount: number }>;
+  models: DashboardModel[];
+  pendingPredictions: PendingPrediction[];
+  recentDecisions: RecentDecision[];
 }
 
 export function getSession(): AuthSession | null {

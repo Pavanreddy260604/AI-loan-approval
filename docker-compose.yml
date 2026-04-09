@@ -64,12 +64,6 @@ services:
       args:
         WORKSPACE: services/gateway-service
     env_file: .env
-    environment:
-      CHOKIDAR_USEPOLLING: "true"
-    volumes:
-      - ./services/gateway-service:/workspace/services/gateway-service
-      - ./packages:/workspace/packages
-      - /workspace/node_modules
     deploy:
       resources:
         limits:
@@ -91,11 +85,6 @@ services:
       args:
         WORKSPACE: services/auth-service
     env_file: .env
-    environment:
-      CHOKIDAR_USEPOLLING: "true"
-    volumes:
-      - .:/workspace
-      - /workspace/node_modules
     ports:
       - "4001:4001"
     deploy:
@@ -114,11 +103,6 @@ services:
       args:
         WORKSPACE: services/data-service
     env_file: .env
-    environment:
-      CHOKIDAR_USEPOLLING: "true"
-    volumes:
-      - .:/workspace
-      - /workspace/node_modules
     ports:
       - "4003:4003"
     deploy:
@@ -139,11 +123,6 @@ services:
       args:
         WORKSPACE: services/notification-service
     env_file: .env
-    environment:
-      CHOKIDAR_USEPOLLING: "true"
-    volumes:
-      - .:/workspace
-      - /workspace/node_modules
     ports:
       - "4005:4005"
     deploy:
@@ -160,11 +139,6 @@ services:
       args:
         WORKSPACE: services/analytics-service
     env_file: .env
-    environment:
-      CHOKIDAR_USEPOLLING: "true"
-    volumes:
-      - .:/workspace
-      - /workspace/node_modules
     ports:
       - "4006:4006"
     deploy:
@@ -184,9 +158,6 @@ services:
         SERVICE_DIR: services/training-service
     profiles: ["ai"]
     env_file: .env
-    working_dir: /workspace/services/training-service
-    volumes:
-      - .:/workspace
     depends_on:
       postgres:
         condition: service_healthy
@@ -207,9 +178,6 @@ services:
       args:
         SERVICE_DIR: services/training-service
     env_file: .env
-    working_dir: /workspace/services/training-service
-    volumes:
-      - .:/workspace
     depends_on:
       postgres:
         condition: service_healthy
@@ -231,9 +199,6 @@ services:
       args:
         SERVICE_DIR: services/training-service
     env_file: .env
-    working_dir: /workspace/services/training-service
-    volumes:
-      - .:/workspace
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -248,9 +213,6 @@ services:
         SERVICE_DIR: services/prediction-service
     profiles: ["ai"]
     env_file: .env
-    working_dir: /workspace/services/prediction-service
-    volumes:
-      - .:/workspace
     depends_on:
       postgres:
         condition: service_healthy
@@ -270,9 +232,6 @@ services:
         SERVICE_DIR: services/prediction-service
     profiles: ["ai"]
     env_file: .env
-    working_dir: /workspace/services/prediction-service
-    volumes:
-      - .:/workspace
     depends_on:
       postgres:
         condition: service_healthy
@@ -294,9 +253,6 @@ services:
         SERVICE_DIR: services/xai-service
     profiles: ["ai"]
     env_file: .env
-    working_dir: /workspace/services/xai-service
-    volumes:
-      - .:/workspace
     depends_on:
       minio:
         condition: service_started
@@ -314,9 +270,6 @@ services:
         SERVICE_DIR: services/fraud-service
     profiles: ["ai"]
     env_file: .env
-    working_dir: /workspace/services/fraud-service
-    volumes:
-      - .:/workspace
     depends_on:
       postgres:
         condition: service_healthy
@@ -336,9 +289,6 @@ services:
         SERVICE_DIR: services/fraud-service
     profiles: ["ai"]
     env_file: .env
-    working_dir: /workspace/services/fraud-service
-    volumes:
-      - .:/workspace
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -355,11 +305,6 @@ services:
       context: .
       dockerfile: ./infra/docker/web.Dockerfile
     env_file: .env
-    volumes:
-      - ./apps/web:/workspace/apps/web
-      - ./packages:/workspace/packages
-      - ./services:/workspace/services
-      - /workspace/node_modules
     deploy:
       resources:
         limits:
