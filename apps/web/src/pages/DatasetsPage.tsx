@@ -17,14 +17,15 @@ import {
 } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import { 
-  EliteCard as Card, 
-  EliteBadge as Badge, 
-  EliteButton as Button, 
+  EliteCard as Card,
+  EliteBadge as Badge,
+  EliteButton as Button,
   EliteSelect as Select,
   ShinyMetricCard,
   Table,
   type TableColumn,
-  EliteSkeletonLoader as SkeletonLoader
+  EliteSkeletonLoader as SkeletonLoader,
+  EliteInlineError as InlineError
 } from "../components/ui";
 import { apiFetch } from "../lib/api";
 import { type AuthContextValue } from "../App";
@@ -452,6 +453,10 @@ export function DatasetsPage({ auth }: { auth: AuthContextValue }) {
     },
   ];
 
+  if (datasets.error && mode === "list") {
+    return <InlineError message={(datasets.error as Error).message} />;
+  }
+
   if (datasets.isLoading && mode === "list") {
      return (
        <div className="py-8 space-y-8">
@@ -487,7 +492,7 @@ export function DatasetsPage({ auth }: { auth: AuthContextValue }) {
       </div>
 
       {/* Workflow Stepper */}
-      <div className="grid grid-cols-5 gap-px-4">
+      <div className="grid grid-cols-5 gap-4">
         {WORKFLOW_STEPS.map((step, i) => {
           const isActive = i === (mode === 'upload' ? 0 : mode === 'mapping' ? 1 : 0);
           return (
@@ -525,20 +530,29 @@ export function DatasetsPage({ auth }: { auth: AuthContextValue }) {
                   <h2 className="text-xl font-bold tracking-tight">Your Datasets</h2>
                   <div className="flex items-center gap-2 px-3 py-1.5 bg-base-900 border border-base-800 rounded-pro text-[10px] font-bold text-base-500 hover:text-base-300 transition-colors">
                      <Search size={14} className="mr-2" /> 
-                     <input 
-                       placeholder="Search datasets..." 
-                       className="bg-transparent border-none text-[11px] p-0 focus:ring-0 w-32 outline-none" 
-                       onChange={(e) => setDatasetSearch(e.target.value)} 
+                     <input
+                       placeholder="Search datasets..."
+                       className="bg-transparent border-none text-[11px] p-0 focus:ring-0 w-32 outline-none"
+                       onChange={(e) => setDatasetSearch(e.target.value)}
+                       aria-label="Search datasets"
                      />
                   </div>
                </div>
 
-               <Table 
-                 data={filteredDatasets} 
+               <Table
+                 data={filteredDatasets}
                  columns={datasetColumns}
                  loading={datasets.isLoading}
                  className="shadow-2xl"
                />
+               {filteredDatasets.length === 0 && !datasets.isLoading && (
+                 <div className="py-16 text-center border border-base-800 rounded-lg bg-base-900/20">
+                   <p className="text-sm text-base-400">No datasets found.</p>
+                   <p className="text-xs text-base-600 mt-1">
+                     {datasetSearch ? "Try a different search term." : "Upload a dataset to get started."}
+                   </p>
+                 </div>
+               )}
             </div>
           </motion.div>
         ) : mode === "upload" ? (
@@ -604,8 +618,11 @@ export function DatasetsPage({ auth }: { auth: AuthContextValue }) {
                    </div>
                 </div>
 
-                <Table 
-                   data={preview.data?.columns || []} 
+                {preview.isError && (
+                  <InlineError message={(preview.error as Error).message} />
+                )}
+                <Table
+                   data={preview.data?.columns || []}
                    columns={schemaColumns}
                    loading={preview.isLoading}
                    rowId="name"

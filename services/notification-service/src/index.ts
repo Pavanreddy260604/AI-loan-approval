@@ -18,7 +18,7 @@ const env = loadEnv(
     SMTP_PASS: z.string().optional(),
     SMTP_PASSWORD: z.string().optional(),
     SMTP_FROM: z.string().email(),
-    SMTP_SECURE: z.coerce.boolean().default(false),
+    SMTP_SECURE: z.string().default("false").transform((v) => v === "true"),
     JWT_PUBLIC_KEY_BASE64: z.string(),
     JWT_ISSUER: z.string(),
     JWT_AUDIENCE: z.string(),

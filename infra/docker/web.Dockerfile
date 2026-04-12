@@ -10,7 +10,6 @@ COPY packages/contracts/package.json ./packages/contracts/
 COPY packages/db/package.json ./packages/db/
 COPY packages/ui/package.json ./packages/ui/
 COPY services/auth-service/package.json ./services/auth-service/
-COPY services/billing-service/package.json ./services/billing-service/
 COPY services/data-service/package.json ./services/data-service/
 COPY apps/web/package.json ./apps/web/
 

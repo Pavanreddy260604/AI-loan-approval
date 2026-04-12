@@ -240,7 +240,7 @@ export function AuthPage({ auth }: { auth: AuthContextValue }) {
                     loading={mutation.isPending}
                     rightIcon={<ArrowRight size={18} className="transition-transform group-hover:translate-x-1" />}
                   >
-                    {mode === "login" ? "Login" : mode === "signup" ? "Create Account" : "Save Password"}
+                    {mode === "login" ? "Login" : mode === "signup" ? "Create Account" : mode === "forgot" ? "Send Reset Code" : "Save Password"}
                   </Button>
                 </div>
 

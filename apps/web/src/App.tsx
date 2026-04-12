@@ -1,6 +1,8 @@
 import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { AppShell } from "./components/layout";
+import { ScrollToTop } from "./components/ScrollToTop";
+import { OfflineBanner } from "./components/OfflineBanner";
 import { clearSession, getSession, persistSession, type AuthSession } from "./lib/api";
 
 // Elite v2 Page Modules
@@ -11,6 +13,7 @@ const ModelsPage = lazy(() => import("./pages/ModelsPage").then((m) => ({ defaul
 const PredictPage = lazy(() => import("./pages/PredictPage").then((m) => ({ default: m.PredictPage })));
 const AdminPage = lazy(() => import("./pages/AdminPage").then((m) => ({ default: m.AdminPage })));
 const LoanDetailPage = lazy(() => import("./pages/LoanDetailPage").then((m) => ({ default: m.LoanDetailPage })));
+const NotFoundPage = lazy(() => import("./pages/NotFoundPage").then((m) => ({ default: m.NotFoundPage })));
 
 export interface AuthContextValue {
   session: AuthSession | null;
@@ -58,10 +61,11 @@ function App() {
   );
 
   useEffect(() => {
-    if (!loading && !session && location.pathname.startsWith("/app")) {
+    if (loading) return;
+    if (!session && location.pathname.startsWith("/app")) {
       navigate("/auth", { replace: true });
     }
-    if (!loading && session && (location.pathname === "/" || location.pathname === "/auth")) {
+    if (session && (location.pathname === "/" || location.pathname === "/auth")) {
       navigate("/app/dashboard", { replace: true });
     }
   }, [loading, location.pathname, navigate, session]);
@@ -72,11 +76,14 @@ function App() {
 
   return (
     <div className="min-h-screen bg-base-950 flex flex-col font-sans selection:bg-primary/30">
+      <OfflineBanner />
+      <ScrollToTop />
       <Suspense fallback={<GlobalSkeleton />}>
         <Routes>
           <Route path="/" element={<Navigate to="/auth" replace />} />
           <Route path="/auth" element={<AuthPage auth={auth} />} />
-          <Route path="/app/*" element={<ProtectedApp auth={auth} />} />
+          <Route path="/app/*" element={session ? <ProtectedApp auth={auth} /> : <GlobalSkeleton />} />
+          <Route path="*" element={<NotFoundPage />} />
         </Routes>
       </Suspense>
     </div>
@@ -107,14 +114,15 @@ function ProtectedApp({ auth }: { auth: AuthContextValue }) {
             <Route path="models" element={<ModelsPage auth={auth} />} />
             <Route path="predict" element={<PredictPage auth={auth} />} />
             <Route path="loan/:id" element={<LoanDetailPage auth={auth} />} />
-            <Route 
-              path="admin" 
+            <Route
+              path="admin"
               element={
-                auth.session?.user.role === "ADMIN" 
-                  ? <AdminPage auth={auth} /> 
+                auth.session?.user.role === "ADMIN"
+                  ? <AdminPage auth={auth} />
                   : <Navigate to="/app/dashboard" replace />
-              } 
+              }
             />
+            <Route path="*" element={<NotFoundPage />} />
           </Routes>
         </Suspense>
         </AppShell>

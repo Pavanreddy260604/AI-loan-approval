@@ -18,7 +18,8 @@ const UndoContext = createContext<UndoContextType | undefined>(undefined);
 
 export function UndoProvider({ children }: { children: React.ReactNode }) {
   const [pendingActions, setPendingActions] = useState<PendingAction[]>([]);
-  const timeouts = useRef<Record<string, any>>({});
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const timeouts = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
   const addAction = (message: string, execute: () => Promise<void>, onUndo: () => void) => {
     const id = Math.random().toString(36).substring(7);
@@ -31,7 +32,10 @@ export function UndoProvider({ children }: { children: React.ReactNode }) {
       try {
         await execute();
       } catch (error) {
-        console.error("Delayed execution failed:", error);
+        const msg = error instanceof Error ? error.message : "Action failed. Please try again.";
+        setErrorMessage(msg);
+        // Auto-dismiss error after 5s
+        setTimeout(() => setErrorMessage(null), 5000);
       } finally {
         setPendingActions((current) => current.filter((a) => a.id !== id));
         delete timeouts.current[id];
@@ -62,6 +66,14 @@ export function UndoProvider({ children }: { children: React.ReactNode }) {
           />
         ))}
       </AnimatePresence>
+      {errorMessage && (
+        <div
+          className="fixed bottom-20 left-1/2 -translate-x-1/2 z-[300] bg-danger/90 text-white text-xs font-bold px-6 py-3 rounded-xl shadow-2xl border border-danger/50"
+          role="alert"
+        >
+          {errorMessage}
+        </div>
+      )}
     </UndoContext.Provider>
   );
 }
