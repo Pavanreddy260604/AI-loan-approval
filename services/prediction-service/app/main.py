@@ -251,16 +251,21 @@ def init_db() -> None:
             ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ
             """
         )
-        cur.execute(
-            """
-            UPDATE predictions
-            SET review_status = CASE WHEN decision = true THEN 'auto_approved' ELSE 'auto_rejected' END
-            WHERE review_status = 'pending'
-              AND decision IS NOT NULL
-              AND reviewed_at IS NULL
-              AND created_at < NOW() - INTERVAL '1 minute'
-            """
-        )
+        # One-time backfill: only run if the migration flag hasn't been set yet.
+        # This prevents wiping the pending queue on every container restart.
+        cur.execute("CREATE TABLE IF NOT EXISTS _migrations (name TEXT PRIMARY KEY, applied_at TIMESTAMPTZ DEFAULT NOW())")
+        cur.execute("SELECT 1 FROM _migrations WHERE name = 'backfill_review_status'")
+        if cur.fetchone() is None:
+            cur.execute(
+                """
+                UPDATE predictions
+                SET review_status = CASE WHEN decision = true THEN 'auto_approved' ELSE 'auto_rejected' END
+                WHERE review_status = 'pending'
+                  AND decision IS NOT NULL
+                  AND reviewed_at IS NULL
+                """
+            )
+            cur.execute("INSERT INTO _migrations (name) VALUES ('backfill_review_status')")
 
 def ensure_bucket(bucket: str) -> None:
     client = s3_client()

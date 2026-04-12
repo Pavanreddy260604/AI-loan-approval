@@ -196,7 +196,7 @@ export type PredictResponse = z.infer<typeof predictResponseSchema>;
 export const dashboardActivitySchema = z.object({
   topic: z.string(),
   payload: z.unknown(),
-  createdAt: z.string(),
+  createdAt: z.string().nullable().default(null),
 });
 
 export type DashboardActivity = z.infer<typeof dashboardActivitySchema>;

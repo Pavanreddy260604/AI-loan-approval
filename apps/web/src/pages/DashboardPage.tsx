@@ -176,11 +176,13 @@ export function DashboardPage(_props: { auth: AuthContextValue }) {
   const recentDecisions = data?.recentDecisions ?? [];
   const highRiskCount = queue.filter(l => l.risk > 70).length;
 
-  // Best model metrics
+  // Best model: prefer pinned (production) model, then highest ROC AUC
   const activeModel = useMemo(() => {
     if (!models.length) return null;
+    const pinned = models.find(m => m.pinnedVersionId);
+    if (pinned) return pinned;
     return models.reduce((best, m) =>
-      (m.championMetrics?.accuracy ?? 0) > (best.championMetrics?.accuracy ?? 0) ? m : best
+      (m.championMetrics?.rocAuc ?? 0) > (best.championMetrics?.rocAuc ?? 0) ? m : best
     , models[0]);
   }, [models]);
 
@@ -358,7 +360,13 @@ export function DashboardPage(_props: { auth: AuthContextValue }) {
         {queue.length === 0 ? (
           <div className="py-16 text-center border border-base-800 rounded-lg bg-base-900/20">
             <p className="text-sm text-base-400">No pending loan applications.</p>
-            <p className="text-xs text-base-600 mt-1">Run predictions from the Predict page to see them here.</p>
+            <p className="text-xs text-base-600 mt-2 max-w-md mx-auto">
+              Run single or batch predictions from the <Link to="/app/predict" className="text-primary hover:underline">Predict</Link> page.
+              Each prediction will appear here for human review.
+            </p>
+            <Link to="/app/predict">
+              <Button variant="outline" size="sm" className="mt-4">Go to Predict</Button>
+            </Link>
           </div>
         ) : (
           <Table
@@ -393,19 +401,19 @@ export function DashboardPage(_props: { auth: AuthContextValue }) {
                <div className="p-8 h-48 flex items-center justify-center border-b border-base-800 bg-[radial-gradient(circle_at_center,rgba(99,91,255,0.05),transparent_70%)]">
                   <div className="text-center space-y-2">
                      <p className="text-4xl font-bold tracking-tighter text-base-50 tabular-nums">
-                       {((activeModel.championMetrics?.accuracy ?? 0) * 100).toFixed(1)}%
+                       {((activeModel.championMetrics?.rocAuc ?? 0) * 100).toFixed(1)}%
                      </p>
-                     <p className="text-[10px] font-bold text-base-600 uppercase tracking-widest">Model Accuracy</p>
+                     <p className="text-[10px] font-bold text-base-600 uppercase tracking-widest">ROC AUC Score</p>
                   </div>
                </div>
                <div className="grid grid-cols-3 divide-x divide-base-800">
                   <div className="p-4 text-center">
-                     <p className="text-xs font-bold text-base-300">{(activeModel.championMetrics?.f1Score ?? 0).toFixed(2)}</p>
-                     <p className="text-[8px] font-bold text-base-600 uppercase tracking-widest">F1 Score</p>
+                     <p className="text-xs font-bold text-base-300">{((activeModel.championMetrics?.accuracy ?? 0) * 100).toFixed(1)}%</p>
+                     <p className="text-[8px] font-bold text-base-600 uppercase tracking-widest">Accuracy</p>
                   </div>
                   <div className="p-4 text-center">
-                     <p className="text-xs font-bold text-base-300">{(activeModel.championMetrics?.rocAuc ?? 0).toFixed(2)}</p>
-                     <p className="text-[8px] font-bold text-base-600 uppercase tracking-widest">ROC AUC</p>
+                     <p className="text-xs font-bold text-base-300">{(activeModel.championMetrics?.f1Score ?? 0).toFixed(2)}</p>
+                     <p className="text-[8px] font-bold text-base-600 uppercase tracking-widest">F1 Score</p>
                   </div>
                   <div className="p-4 text-center">
                      <p className="text-xs font-bold text-base-300">{(activeModel.championMetrics?.precision ?? 0).toFixed(2)}</p>
@@ -450,9 +458,9 @@ export function DashboardPage(_props: { auth: AuthContextValue }) {
               )}
            </div>
            <div className="p-4 bg-base-950/50 border-t border-base-800">
-              <Link to="/app/admin">
+              <Link to="/app/predict">
                 <Button variant="ghost" size="sm" className="w-full text-[10px] uppercase tracking-widest font-bold">
-                  View History
+                  Run New Prediction
                 </Button>
               </Link>
            </div>

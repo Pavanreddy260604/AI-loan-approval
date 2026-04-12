@@ -263,6 +263,26 @@ function normalizeModelVersion(v: any): any {
   };
 }
 
+function normalizePredictionRecord(p: any): any {
+  if (!p) return p;
+  return {
+    id: p.id,
+    datasetId: p.dataset_id || p.datasetId,
+    modelVersionId: p.model_version_id || p.modelVersionId,
+    decision: p.decision,
+    probability: Number(p.probability ?? 0),
+    features: p.features || {},
+    fraudScore: p.fraud_score ?? p.fraudScore ?? null,
+    fraudSignals: p.fraud_signals ?? p.fraudSignals ?? null,
+    explanation: p.explanation ?? null,
+    reviewStatus: p.review_status || p.reviewStatus || "pending",
+    reviewedBy: p.reviewed_by || p.reviewedBy || null,
+    reviewedAt: p.reviewed_at || p.reviewedAt || null,
+    createdAt: p.created_at || p.createdAt || null,
+    modelVersion: p.model_version ? normalizeModelVersion(p.model_version) : (p.modelVersion || null),
+  };
+}
+
 function isOfflineError(error: any): boolean {
   return error.code === 'ENOTFOUND' || error.code === 'ECONNREFUSED' || error.code === 'EAI_AGAIN' || error.message?.includes('fetch failed');
 }
@@ -319,27 +339,6 @@ function normalizeFraud(body: any) {
     ...(body.unavailable ? { unavailable: true } : {}),
   };
 }
-
-function normalizePredictionRecord(body: any) {
-  const decision = normalizeDecision(body?.decision);
-  const explanation = body?.explanation
-    ? { ...body.explanation, isComputing: false }
-    : { topContributors: [], summary: { positiveDrivers: [], negativeDrivers: [] }, isComputing: true };
-  const hasFraud = !!body?.fraud || body?.fraudScore != null || body?.fraud_score != null;
-  return {
-    predictionId: body?.predictionId ?? body?.prediction_id ?? null,
-    approved: decision === "Approved",
-    decision,
-    probability: Number(body?.probability ?? 0),
-    features: body?.features ?? {},
-    explanation,
-    fraud: hasFraud ? normalizeFraud(body?.fraud ?? body) : { riskBand: "unknown", anomalyScore: null, riskScore: null, ruleFlags: [], unavailable: true },
-    createdAt: asIsoString(body?.createdAt ?? body?.created_at),
-  };
-}
-
-
-// buildGatewayUrl removed
 
 // End of utility functions
 

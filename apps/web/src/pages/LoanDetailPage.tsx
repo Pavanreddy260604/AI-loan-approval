@@ -90,14 +90,23 @@ export function LoanDetailPage({ auth }: { auth: AuthContextValue }) {
     );
   }
 
-  // Normalise API response — fall back gracefully if some fields are missing
-  const loanName = loan?.name || loan?.modelFamily || `Loan #${id}`;
-  const riskScore = loan?.riskScore ?? loan?.probability != null ? Math.round((1 - loan.probability) * 100) : null;
-  const confidence = loan?.probability != null ? Math.round(loan.probability * 100) : null;
-  const applicant = loan?.applicant || {};
-  const riskFactors = loan?.explanation?.topContributors || [];
+  // Normalise API response — map prediction fields to display fields
+  const features = loan?.features || loan?.applicant || {};
+  const nameKeys = ["loan_type", "purpose", "loan_purpose", "product", "applicant_name", "name"];
+  const loanName = nameKeys.reduce((found: string | null, k) => found || (features[k] ? String(features[k]) : null), null)
+    || loan?.modelVersion?.family || loan?.modelFamily || `Loan #${id}`;
+  const probability = loan?.probability ?? null;
+  const riskScore = probability != null ? Math.round((1 - probability) * 100) : (loan?.riskScore ?? null);
+  const confidence = probability != null ? Math.round(probability * 100) : null;
+  const applicant = features;
+  const explanation = loan?.explanation || {};
+  const riskFactors = explanation?.topContributors || explanation?.top_contributors
+    || (Array.isArray(explanation?.features) ? explanation.features : []);
   const auditTrail = loan?.audit || [];
-  const status = loan?.status || (loan?.decision === true ? "APPROVED" : loan?.decision === false ? "REJECTED" : "UNDER_REVIEW");
+  const reviewStatus = loan?.reviewStatus || loan?.review_status;
+  const status = loan?.status
+    || (reviewStatus === "approved" ? "APPROVED" : reviewStatus === "rejected" ? "REJECTED" : null)
+    || (loan?.decision === true ? "APPROVED" : loan?.decision === false ? "REJECTED" : "UNDER_REVIEW");
 
   return (
     <div className="space-y-10 animate-in text-base-200 pb-20">
