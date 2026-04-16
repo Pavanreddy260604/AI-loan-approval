@@ -341,8 +341,22 @@ export function LoanDetailPage({ auth }: { auth: AuthContextValue }) {
                       Approve Application
                     </Button>
                   </FrictionGate>
-                  <Button variant="secondary" className="w-full h-14 text-[11px] font-black uppercase tracking-[0.2em] italic bg-base-950 border-base-800 hover:bg-base-800" leftIcon={<ArrowUpRight size={18} />}>
-                    Escalate to Manager
+                  <Button
+                    variant="secondary"
+                    className="w-full h-14 text-[11px] font-black uppercase tracking-[0.2em] italic bg-base-950 border-base-800 hover:bg-base-800 disabled:opacity-40 disabled:cursor-not-allowed"
+                    leftIcon={<ArrowUpRight size={18} />}
+                    disabled={status !== "UNDER_REVIEW"}
+                    onClick={() => {
+                      addAction(
+                        `Escalated loan #${id} for manager review`,
+                        async () => { /* Escalation logged client-side only for now */ },
+                        () => {}
+                      );
+                      navigate("/app/dashboard");
+                    }}
+                    title={status !== "UNDER_REVIEW" ? "Only pending loans can be escalated" : "Flag this loan for manager review"}
+                  >
+                    {status !== "UNDER_REVIEW" ? "Already Decided" : "Escalate to Manager"}
                   </Button>
                 </div>
               </div>
@@ -375,11 +389,16 @@ export function LoanDetailPage({ auth }: { auth: AuthContextValue }) {
               <div className="h-10 w-10 bg-base-950 border border-base-800 rounded-xl flex items-center justify-center text-primary/40 group-hover:text-primary transition-colors shadow-inner">
                 <BarChart3 size={20} />
               </div>
-              <div>
+              <div className="min-w-0">
                 <h4 className="text-[10px] font-black text-base-700 uppercase tracking-[0.2em] mb-1">Model</h4>
-                <p className="text-[11px] font-black text-base-300 uppercase italic tracking-tighter">
-                  {loan?.modelFamily || "Standard Decision Model"}
+                <p className="text-[11px] font-black text-base-300 uppercase italic tracking-tighter truncate">
+                  {loan?.modelVersion?.family || loan?.modelFamily || "Decision Model"}
                 </p>
+                {loan?.modelVersion?.metrics?.rocAuc != null && (
+                  <p className="text-[9px] font-bold text-base-600 mt-1">
+                    ROC AUC: {(loan.modelVersion.metrics.rocAuc * 100).toFixed(1)}%
+                  </p>
+                )}
               </div>
             </div>
           </Card>
