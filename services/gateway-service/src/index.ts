@@ -1115,24 +1115,37 @@ app.patch("/api/v1/admin/users/:userId/role", authenticate, requireRole("ADMIN")
 app.get("/api/v1/telemetry", authenticate, requireRole("ADMIN"), async (req: AuthenticatedRequest, res) => {
   try {
     const authHeader = { Authorization: req.headers.authorization };
-    const [users, analytics, authHealth, dataHealth, trainingHealth, predictHealth] = await Promise.all([
+    async function healthPing(url: string): Promise<{ ok: boolean; latencyMs: number }> {
+      const t0 = Date.now();
+      try {
+        const r = await fetch(`${url}/health`, { signal: AbortSignal.timeout(5000) });
+        return { ok: r.ok, latencyMs: Date.now() - t0 };
+      } catch { return { ok: false, latencyMs: Date.now() - t0 }; }
+    }
+
+    const [users, analytics, authPing, dataPing, trainingPing, predictPing, gatewayStart] = await Promise.all([
       serviceJson(`${env.AUTH_SERVICE_URL}/internal/users`, { headers: authHeader }),
       serviceJson(`${env.ANALYTICS_SERVICE_URL}/internal/analytics/admin`, { headers: authHeader }),
-      fetch(`${env.AUTH_SERVICE_URL}/health`).then(r => r.ok).catch(() => false),
-      fetch(`${env.DATA_SERVICE_URL}/health`).then(r => r.ok).catch(() => false),
-      fetch(`${env.TRAINING_SERVICE_URL}/health`).then(r => r.ok).catch(() => false),
-      fetch(`${env.PREDICTION_SERVICE_URL}/health`).then(r => r.ok).catch(() => false),
+      healthPing(env.AUTH_SERVICE_URL),
+      healthPing(env.DATA_SERVICE_URL),
+      healthPing(env.TRAINING_SERVICE_URL),
+      healthPing(env.PREDICTION_SERVICE_URL),
+      Promise.resolve(process.memoryUsage()),
     ]);
+
+    const memUsageGB = gatewayStart.heapUsed / (1024 * 1024 * 1024);
+    const allPings = [authPing, dataPing, trainingPing, predictPing];
+    const healthyCount = allPings.filter(p => p.ok).length;
 
     res.json({
       users: users.body || [],
       services: [
-        { name: "Auth Service", status: authHealth ? "HEALTHY" : "DOWN", region: "Primary" },
-        { name: "Data Service", status: dataHealth ? "HEALTHY" : "DOWN", region: "Primary" },
-        { name: "Training Node", status: trainingHealth ? "HEALTHY" : "DOWN", region: "HPC-East" },
-        { name: "Inference Engine", status: predictHealth ? "HEALTHY" : "DOWN", region: "GPU-Cluster" },
+        { name: "Auth Service", status: authPing.ok ? "HEALTHY" : "DOWN", region: "Primary", uptime: `${authPing.latencyMs}ms` },
+        { name: "Data Service", status: dataPing.ok ? "HEALTHY" : "DOWN", region: "Primary", uptime: `${dataPing.latencyMs}ms` },
+        { name: "Training Node", status: trainingPing.ok ? "HEALTHY" : "DOWN", region: "Compute", uptime: `${trainingPing.latencyMs}ms` },
+        { name: "Inference Engine", status: predictPing.ok ? "HEALTHY" : "DOWN", region: "Compute", uptime: `${predictPing.latencyMs}ms` },
       ],
-      systemUsage: { cpu: 0.12 + Math.random() * 0.05, memory: 1.2 + Math.random() * 0.2 },
+      systemUsage: { cpu: healthyCount / allPings.length, memory: parseFloat(memUsageGB.toFixed(2)) },
       analytics: analytics.body || {},
     });
   } catch (error) {

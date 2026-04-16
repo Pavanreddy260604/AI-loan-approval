@@ -134,12 +134,15 @@ export function AdminPage({ auth }: { auth: AuthContextValue }) {
       header: 'Latency',
       accessor: 'uptime',
       className: 'text-right',
-      render: (row) => (
-        <div className="flex items-baseline justify-end gap-1.5">
-           <span className="font-mono font-black text-base-50 text-sm italic">{row.uptime || '8ms'}</span>
-           <span className="text-[9px] font-bold text-base-800 uppercase">MS</span>
-        </div>
-      ),
+      render: (row) => {
+        const latency = row.uptime ? parseInt(row.uptime) : null;
+        const tone = row.status !== "HEALTHY" ? "text-danger" : latency && latency > 200 ? "text-warning" : "text-success";
+        return (
+          <div className="flex items-baseline justify-end gap-1.5">
+             <span className={`font-mono font-black text-sm italic ${tone}`}>{row.uptime || '—'}</span>
+          </div>
+        );
+      },
     },
   ];
 
@@ -233,11 +236,11 @@ export function AdminPage({ auth }: { auth: AuthContextValue }) {
            icon={Users} 
            hint="Authorized Officer Accounts" 
          />
-         <ShinyMetricCard 
-           title="CPU Core Saturation" 
-           value={`${(systemUsage.cpu * 100).toFixed(0)}%`} 
-           icon={Cpu} 
-           hint={`Memory: ${systemUsage.memory.toFixed(1)} GB Reserved`} 
+         <ShinyMetricCard
+           title="Service Health"
+           value={`${(systemUsage.cpu * 100).toFixed(0)}%`}
+           icon={Cpu}
+           hint={`Gateway Memory: ${(systemUsage.memory * 1024).toFixed(0)} MB`}
          />
          <Card border padded className="flex flex-col justify-center bg-primary/5 border-primary/20 shadow-elite-primary/5 group relative overflow-hidden">
             <div className="absolute top-0 right-0 -mt-12 -mr-12 w-32 h-32 bg-primary/10 rounded-full blur-2xl group-hover:scale-150 transition-transform duration-1000" />
@@ -277,8 +280,10 @@ export function AdminPage({ auth }: { auth: AuthContextValue }) {
              onRowClick={() => {}}
            />
            {services.length === 0 && !telemetry.isLoading && (
-             <div className="py-12 text-center text-xs text-base-500 border border-base-800 rounded-lg bg-base-900/20">
-               No services found.
+             <div className="py-12 text-center border border-base-800 rounded-lg bg-base-900/20">
+               <Server size={20} className="mx-auto text-base-700 mb-3" />
+               <p className="text-xs text-base-500">No services registered.</p>
+               <p className="text-[10px] text-base-700 mt-1">Services will appear here once they connect to the gateway.</p>
              </div>
            )}
         </div>
@@ -299,7 +304,11 @@ export function AdminPage({ auth }: { auth: AuthContextValue }) {
               <Card border className="p-0 overflow-hidden bg-base-900/40 border-base-800 shadow-2xl">
                  <div className="max-h-[500px] overflow-y-auto custom-scrollbar divide-y divide-base-800">
                     {users.length === 0 && (
-                      <div className="py-12 text-center text-xs text-base-500">No users found.</div>
+                      <div className="py-12 text-center">
+                        <Users size={20} className="mx-auto text-base-700 mb-3" />
+                        <p className="text-xs text-base-500">No registered users.</p>
+                        <p className="text-[10px] text-base-700 mt-1">Users appear after signing up via the authentication portal.</p>
+                      </div>
                     )}
                     {users.map((user) => (
                        <div key={user.id} className="p-6 flex items-center justify-between hover:bg-base-800/50 transition-all group cursor-pointer relative overflow-hidden">
@@ -316,8 +325,14 @@ export function AdminPage({ auth }: { auth: AuthContextValue }) {
                        </div>
                     ))}
                  </div>
-                 <Button variant="secondary" className="w-full h-14 rounded-none text-[10px] font-black uppercase tracking-[0.2em] bg-base-950 border-t border-base-800 hover:bg-primary/10 hover:text-primary transition-all group" leftIcon={<PlusCircle size={16} className="group-hover:scale-110 transition-transform" />}>
-                    Provision New Identity
+                 <Button
+                   variant="secondary"
+                   className="w-full h-14 rounded-none text-[10px] font-black uppercase tracking-[0.2em] bg-base-950 border-t border-base-800 hover:bg-primary/10 hover:text-primary transition-all group disabled:opacity-40"
+                   leftIcon={<PlusCircle size={16} className="group-hover:scale-110 transition-transform" />}
+                   disabled
+                   title="New users can self-register via the authentication portal"
+                 >
+                    Self-Registration Enabled
                  </Button>
               </Card>
            </div>

@@ -8,7 +8,6 @@ import {
   CheckCircle2,
   XCircle,
   Search,
-  Filter,
   Info,
   Database,
   Brain,
@@ -126,6 +125,8 @@ export function DashboardPage(_props: { auth: AuthContextValue }) {
   // Local queue state for optimistic updates (remove on approve/reject, restore on undo)
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set());
+  const [searchQuery, setSearchQuery] = useState("");
+  const [riskFilter, setRiskFilter] = useState<"all" | "high" | "medium" | "low">("all");
 
   // Sync API data into local queue when data changes
   useEffect(() => {
@@ -165,8 +166,21 @@ export function DashboardPage(_props: { auth: AuthContextValue }) {
     setDismissedIds((curr) => new Set(curr).add(loan.id));
   };
 
+  // Filtered queue for search + risk filter
+  const filteredQueue = useMemo(() => {
+    let items = queue;
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      items = items.filter(l => l.name.toLowerCase().includes(q) || l.id.toLowerCase().includes(q) || l.amount.toLowerCase().includes(q));
+    }
+    if (riskFilter === "high") items = items.filter(l => l.risk > 70);
+    else if (riskFilter === "medium") items = items.filter(l => l.risk >= 40 && l.risk <= 70);
+    else if (riskFilter === "low") items = items.filter(l => l.risk < 40);
+    return items;
+  }, [queue, searchQuery, riskFilter]);
+
   const { setSelectedIndex } = useKeyboardActions(
-    queue,
+    filteredQueue,
     (item, type) => handleDecision(item, type)
   );
 
@@ -345,15 +359,29 @@ export function DashboardPage(_props: { auth: AuthContextValue }) {
 
       {/* Pending Loans Queue */}
       <div className="space-y-4">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
            <h2 className="text-xl font-bold tracking-tight">Pending Loans</h2>
            <div className="flex items-center gap-2">
-              <Button variant="outline" size="xs" leftIcon={<Search size={12} />} aria-label="Search loans">
-                Search Loans
-              </Button>
-              <Button variant="outline" size="xs" leftIcon={<Filter size={12} />} aria-label="Filter loans">
-                Filter
-              </Button>
+              <div className="relative">
+                <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-base-600" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search loans..."
+                  className="h-8 w-44 pl-8 pr-3 bg-base-950 border border-base-800 rounded-lg text-xs text-base-200 placeholder:text-base-700 focus:outline-none focus:border-primary/50 transition-colors"
+                />
+              </div>
+              <select
+                value={riskFilter}
+                onChange={(e) => setRiskFilter(e.target.value as "all" | "high" | "medium" | "low")}
+                className="h-8 px-3 bg-base-950 border border-base-800 rounded-lg text-xs text-base-200 focus:outline-none focus:border-primary/50 transition-colors cursor-pointer"
+              >
+                <option value="all">All Risk</option>
+                <option value="high">High Risk</option>
+                <option value="medium">Medium Risk</option>
+                <option value="low">Low Risk</option>
+              </select>
            </div>
         </div>
 
@@ -368,16 +396,23 @@ export function DashboardPage(_props: { auth: AuthContextValue }) {
               <Button variant="outline" size="sm" className="mt-4">Go to Predict</Button>
             </Link>
           </div>
+        ) : filteredQueue.length === 0 ? (
+          <div className="py-12 text-center border border-base-800 rounded-lg bg-base-900/20">
+            <p className="text-sm text-base-400">No loans match your search.</p>
+            <button onClick={() => { setSearchQuery(""); setRiskFilter("all"); }} className="text-xs text-primary hover:underline mt-2">
+              Clear filters
+            </button>
+          </div>
         ) : (
           <Table
-            data={queue}
+            data={filteredQueue}
             columns={columns}
             loading={isLoading}
             pagination={{
               currentPage: 1,
-              totalPages: 1,
+              totalPages: Math.ceil(filteredQueue.length / 10),
               pageSize: 10,
-              totalItems: queue.length,
+              totalItems: filteredQueue.length,
               onPageChange: () => {},
             }}
             onRowClick={(_row, idx) => setSelectedIndex(idx)}
