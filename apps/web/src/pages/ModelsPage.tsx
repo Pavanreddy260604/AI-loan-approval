@@ -1,4 +1,4 @@
-import { useState, useMemo, useDeferredValue } from "react";
+import { useState, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { 
@@ -7,10 +7,9 @@ import {
   RotateCcw, 
   TrendingUp, 
   Activity, 
-  ShieldCheck, 
-  Search
+  ShieldCheck
 } from "lucide-react";
-import { 
+import {
   EliteCard as Card,
   EliteButton as Button,
   EliteBadge as Badge,
@@ -19,7 +18,9 @@ import {
   Table,
   type TableColumn,
   EliteSkeletonLoader as SkeletonLoader,
-  EliteInlineError as InlineError
+  EliteInlineError as InlineError,
+  Tooltip,
+  useToast
 } from "../components/ui";
 import { apiFetch } from "../lib/api";
 import { type AuthContextValue } from "../App";
@@ -33,10 +34,9 @@ export function ModelsPage({ auth }: { auth: AuthContextValue }) {
   const [params] = useSearchParams();
   const datasetId = params.get("datasetId");
   const queryClient = useQueryClient();
+  const toast = useToast();
+  // Notifications hook removed - was unused
   const [pinSelections, setPinSelections] = useState<Record<string, string>>({});
-  const [modelSearch, setModelSearch] = useState("");
-  const deferredSearch = useDeferredValue(modelSearch);
-  const [openSelectId, setOpenSelectId] = useState<string | null>(null);
 
   const models = useQuery<Model[]>({
     queryKey: ["models", auth.session?.token],
@@ -59,36 +59,54 @@ export function ModelsPage({ auth }: { auth: AuthContextValue }) {
   const trainMutation = useMutation({
     mutationFn: async (dsId: string) =>
       apiFetch("/models/train", { method: "POST", token: auth.session?.token, body: { datasetId: dsId } }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["models"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["models"] });
+      
+      // Psychological UX: Tell user they can leave and will get email
+      // This reduces anxiety and builds trust
+      toast.success(
+        "Training started! You can close this tab — we'll email you when it's ready.",
+        8000 // Longer duration so they can read it
+      );
+    },
+    onError: (err: any) => {
+      toast.error(err?.message || "Unable to start training.");
+    },
   });
 
   const pinMutation = useMutation({
     mutationFn: async ({ modelId, versionId }: { modelId: string, versionId: string }) =>
       apiFetch(`/models/${modelId}/pin`, { method: "POST", token: auth.session?.token, body: { versionId } }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["models"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["models"] });
+      toast.success("Version promoted to production.");
+    },
+    onError: (err: any) => {
+      toast.error(err?.message || "Unable to promote version.");
+    },
   });
 
   const filteredModels = useMemo(() => {
-    const search = deferredSearch.trim().toLowerCase();
-    if (!search) return models.data ?? [];
-    return (models.data ?? []).filter((m) =>
-      (m.championFamily || "").toLowerCase().includes(search) || m.id.toLowerCase().includes(search)
-    );
-  }, [deferredSearch, models.data]);
+    return models.data ?? [];
+  }, [models.data]);
 
   const stats = useMemo(() => {
     const data = models.data || [];
+    const ready = data.filter(m => m.championMetrics && (m.championMetrics.accuracy || m.championMetrics.rocAuc));
     return {
       total: data.length,
       active: data.filter(m => m.lastTrainingStatus === 'completed').length,
-      avgGini: data.length ? data.reduce((acc, m) => acc + (m.championMetrics?.rocAuc || 0), 0) / data.length : 0
+      avgAccuracy: ready.length
+        ? ready.reduce((acc, m) => acc + (m.championMetrics?.accuracy || m.championMetrics?.rocAuc || 0), 0) / ready.length
+        : 0,
+      readyCount: ready.length,
     };
   }, [models.data]);
 
   // Table Column Definitions: Scorecard Registry
   const modelColumns: TableColumn<Model>[] = [
     {
-      header: 'Scorecard Family',
+      header: 'Model Family',
       accessor: 'championFamily',
       render: (row) => {
         const isTraining = row.lastTrainingStatus === 'queued' || row.lastTrainingStatus === 'processing';
@@ -108,6 +126,7 @@ export function ModelsPage({ auth }: { auth: AuthContextValue }) {
     {
       header: 'Context',
       accessor: 'datasetId',
+      className: 'hidden md:table-cell',
       render: (row) => (
         <span className="text-[10px] font-bold text-primary uppercase bg-primary/10 px-2 py-0.5 rounded border border-primary/20 tracking-wider">
            LB-{row.datasetId?.slice(-8)}
@@ -139,49 +158,99 @@ export function ModelsPage({ auth }: { auth: AuthContextValue }) {
       header: 'Status',
       accessor: 'lastTrainingStatus',
       render: (row) => {
-        const isTraining = row.lastTrainingStatus === 'queued' || row.lastTrainingStatus === 'processing';
-        const isFailed = row.lastTrainingStatus === 'failed';
+        const status = row.lastTrainingStatus || 'idle';
+        const isTraining = status === 'queued' || status === 'processing';
+        const isFailed = status === 'failed';
+        const isComplete = status === 'completed';
+        const tone: 'danger' | 'warning' | 'success' | 'ghost' = isFailed ? 'danger' : isTraining ? 'warning' : isComplete ? 'success' : 'ghost';
+        const label = status === 'queued' ? 'Queued'
+          : status === 'processing' ? 'Training'
+          : status === 'completed' ? 'Ready'
+          : status === 'failed' ? 'Failed'
+          : 'Idle';
         return (
-          <Badge tone={isFailed ? 'danger' : isTraining ? 'warning' : 'success'}>
-             {row.lastTrainingStatus}
+          <Badge tone={tone}>
+             {label}
           </Badge>
         );
       },
     },
     {
-      header: 'Update Version',
+      header: 'Production',
       accessor: 'id',
-      className: 'text-right min-w-[280px]',
+      align: 'right',
+      width: '344px',
+      className: 'text-right md:min-w-[320px]',
       render: (row) => {
         const matchingVersions = (allVersions.data || []).filter(v => v.modelId === row.id);
         const selectedVersionId = pinSelections[row.id] || row.pinnedVersionId || "";
-        const canPromote = selectedVersionId && selectedVersionId !== row.pinnedVersionId;
-        const isDropdownOpen = openSelectId === row.id;
-        const isMutationPending = pinMutation.isPending;
-        const hasStagedSelection = !!pinSelections[row.id];
-        
+        const liveVersion = matchingVersions.find((version) => version.id === row.pinnedVersionId) || null;
+
+        const promoteDisabledReason = !selectedVersionId
+          ? "Select a version before promoting."
+          : selectedVersionId === row.pinnedVersionId
+            ? "This version is already promoted to production."
+            : matchingVersions.length === 0
+              ? "No trained versions available yet."
+              : null;
+
+        const promoteButton = (
+          <Button
+            variant="primary"
+            className="w-full sm:w-auto shrink-0"
+            size="sm"
+            disabled={!!promoteDisabledReason}
+            onClick={() => pinMutation.mutate({ modelId: row.id, versionId: selectedVersionId })}
+            loading={pinMutation.isPending}
+          >
+            Promote
+          </Button>
+        );
+
         return (
-          <div className={`flex items-center justify-end gap-3 transition-opacity ${isDropdownOpen || hasStagedSelection || isMutationPending ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
-             <Select 
-                className="w-48 text-[11px]"
+          <div
+            className="flex min-w-[280px] flex-col gap-2.5 text-left"
+            onClick={(event) => event.stopPropagation()}
+          >
+             <div className="flex items-center justify-between gap-2">
+                <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-base-600">
+                  Live Version
+                </span>
+                {liveVersion ? <Badge tone="success">In Production</Badge> : <Badge tone="ghost">Not Live</Badge>}
+             </div>
+             <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-end">
+             <Select
+                className="w-full text-[11px] sm:flex-1 sm:min-w-[190px]"
                 value={selectedVersionId}
-                placeholder="Select version..."
-                options={matchingVersions.map((v) => ({ 
-                   label: `${v.family} (${(v.metrics?.rocAuc * 100).toFixed(1)}%)`, 
-                   value: v.id 
-                }))}
+                placeholder={matchingVersions.length === 0 ? "No versions yet" : "Select version..."}
+                disabled={matchingVersions.length === 0}
+                options={matchingVersions.map((v) => {
+                   const rocAuc = v.metrics?.rocAuc;
+                   const accuracyLabel = typeof rocAuc === 'number' && isFinite(rocAuc)
+                     ? `${(rocAuc * 100).toFixed(1)}%`
+                     : '—';
+                   return {
+                     label: `${v.family} (${accuracyLabel})`,
+                     value: v.id
+                   };
+                })}
                 onChange={(val) => setPinSelections(prev => ({ ...prev, [row.id]: val }))}
-                onOpenChange={(isOpen) => setOpenSelectId(isOpen ? row.id : null)}
              />
-             <Button 
-                variant="primary" 
-                size="sm" 
-                disabled={!canPromote}
-                onClick={() => pinMutation.mutate({ modelId: row.id, versionId: selectedVersionId })}
-                loading={pinMutation.isPending}
-             >
-                Promote
-             </Button>
+             {promoteDisabledReason ? (
+               <Tooltip content={promoteDisabledReason} placement="top-end" className="w-full sm:w-auto">
+                 <span className="block w-full sm:w-auto" aria-label={promoteDisabledReason}>{promoteButton}</span>
+               </Tooltip>
+             ) : (
+               <div className="w-full sm:w-auto">{promoteButton}</div>
+             )}
+             </div>
+             <p className="text-[10px] leading-relaxed text-base-600">
+               {liveVersion
+                 ? `${liveVersion.family} is serving production traffic.`
+                 : matchingVersions.length === 0
+                   ? "Train a version before promoting a model."
+                   : "Select a trained version, then promote it to production."}
+             </p>
           </div>
         );
       },
@@ -207,84 +276,80 @@ export function ModelsPage({ auth }: { auth: AuthContextValue }) {
 
   return (
     <div className="space-y-8 animate-in">
-      <div className="flex flex-col md:flex-row items-center justify-between gap-6">
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div className="flex flex-col">
-           <span className="text-[10px] font-bold text-base-600 uppercase tracking-widest leading-none">Model Engine</span>
-           <h1 className="text-2xl font-bold tracking-tight text-base-50">Models</h1>
-           <p className="text-sm text-base-500 mt-1">Train and manage optimized models for loan decisions.</p>
+           <h1 className="text-xl sm:text-2xl font-semibold text-base-50">Models</h1>
+           <p className="text-sm text-base-500 mt-1">Train and manage models for loan decisions.</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3 w-full md:w-auto">
            {datasetId && (
-            <Button 
-               onClick={() => trainMutation.mutate(datasetId)} 
-               loading={trainMutation.isPending} 
+            <Button
+               onClick={() => trainMutation.mutate(datasetId)}
+               loading={trainMutation.isPending}
                variant="primary"
                leftIcon={<Plus size={16} />}
+               className="w-full sm:w-auto"
             >
                Train New Model
             </Button>
           )}
-           <Button 
-             variant="secondary" 
-             onClick={() => queryClient.invalidateQueries({ queryKey: ["models"] })}
-             leftIcon={<RotateCcw size={16} className={models.isRefetching ? "animate-spin" : ""} />}
-          >
-             Refresh Models
-          </Button>
+           {stats.total > 0 && (
+             <Button
+               variant="secondary"
+               onClick={() => queryClient.invalidateQueries({ queryKey: ["models"] })}
+               leftIcon={<RotateCcw size={16} className={models.isRefetching ? "animate-spin" : ""} />}
+               className="w-full sm:w-auto"
+            >
+               Refresh Models
+            </Button>
+           )}
         </div>
       </div>
 
-       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
           <ShinyMetricCard title="Total Models" value={stats.total} icon={BrainCircuit} />
-          <ShinyMetricCard title="Model Accuracy" value={`${(stats.avgGini * 100).toFixed(1)}%`} icon={TrendingUp} />
+          <ShinyMetricCard title="Avg Accuracy" value={stats.readyCount === 0 ? "No data yet" : `${(stats.avgAccuracy * 100).toFixed(1)}%`} icon={TrendingUp} />
           <ShinyMetricCard title="Production Ready" value={stats.active} icon={ShieldCheck} />
        </div>
 
       <div className="space-y-4">
-          <div className="flex items-center justify-between">
-             <h2 className="text-xl font-bold tracking-tight">Available Models</h2>
-             <div className="flex items-center gap-2 px-3 py-1.5 bg-base-900 border border-base-800 rounded-pro text-[10px] font-bold text-base-500 hover:text-base-300 transition-colors">
-                <Search size={14} className="mr-2" /> 
-                <input
-                  placeholder="Search models..."
-                  className="bg-transparent border-none text-[11px] p-0 focus:ring-0 w-32 outline-none"
-                  onChange={(e) => setModelSearch(e.target.value)}
-                  aria-label="Search models"
-                />
-             </div>
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+             <h2 className="text-lg sm:text-xl font-bold tracking-tight">Available Models</h2>
           </div>
 
-         <Table
-            data={filteredModels}
-            columns={modelColumns}
-            loading={models.isLoading}
-            className="shadow-2xl"
-         />
+         <div className="-mx-4 sm:mx-0 overflow-x-auto">
+           <Table
+              data={filteredModels}
+              columns={modelColumns}
+              loading={models.isLoading}
+              className="shadow-2xl min-w-[980px] sm:min-w-0"
+           />
+         </div>
          {filteredModels.length === 0 && !models.isLoading && (
            <div className="py-16 text-center border border-base-800 rounded-lg bg-base-900/20">
              <p className="text-sm text-base-400">No models found.</p>
              <p className="text-xs text-base-600 mt-1">
-               {modelSearch ? "Try a different search term." : "Train a model from the Datasets page to get started."}
+               Train a model from the Datasets page to get started.
              </p>
            </div>
          )}
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <Card border padded className="bg-base-900 border-base-800 shadow-lg group hover:border-primary/40 transition-colors">
-             <TrendingUp size={24} className="text-primary mb-4 group-hover:scale-110 transition-transform" />
-             <h4 className="text-[10px] font-bold text-base-50 uppercase tracking-widest mb-3 leading-none">Smart Tuning</h4>
-             <p className="text-[11px] text-base-500 leading-relaxed">System evaluates multiple algorithms and settings for the best possible accuracy.</p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+          <Card border className="p-4">
+             <TrendingUp size={20} className="text-primary mb-3" />
+             <h4 className="text-sm font-medium text-base-200 mb-1">Smart Tuning</h4>
+             <p className="text-xs text-base-500">Evaluates multiple algorithms for best accuracy.</p>
           </Card>
-         <Card border padded className="bg-base-900 border-base-800 shadow-lg group hover:border-success/40 transition-colors">
-            <ShieldCheck size={24} className="text-success mb-4 group-hover:scale-110 transition-transform" />
-            <h4 className="text-[10px] font-bold text-base-50 uppercase tracking-widest mb-3 leading-none">Version Persistence</h4>
-            <p className="text-[11px] text-base-500 leading-relaxed">Every calibration generates a persistent version. Promote competitive versions to update the production endpoint.</p>
+         <Card border className="p-4">
+            <ShieldCheck size={20} className="text-success mb-3" />
+            <h4 className="text-sm font-medium text-base-200 mb-1">Version Persistence</h4>
+            <p className="text-xs text-base-500">Promote competitive versions to production.</p>
          </Card>
-          <Card border padded className="bg-base-900 border-base-800 shadow-lg group hover:border-warning/40 transition-colors">
-             <Activity size={24} className="text-warning mb-4 group-hover:scale-110 transition-transform" />
-             <h4 className="text-[10px] font-bold text-base-50 uppercase tracking-widest mb-3 leading-none">Data Balancing</h4>
-             <p className="text-[11px] text-base-500 leading-relaxed">Advanced techniques are applied to uneven data to ensure stable and fair performance across all groups.</p>
+          <Card border className="p-4">
+             <Activity size={20} className="text-warning mb-3" />
+             <h4 className="text-sm font-medium text-base-200 mb-1">Data Balancing</h4>
+             <p className="text-xs text-base-500">Fair performance across all data groups.</p>
           </Card>
       </div>
     </div>

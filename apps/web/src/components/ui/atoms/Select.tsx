@@ -48,7 +48,7 @@ export const Select = React.forwardRef<HTMLDivElement, SelectProps>(
       value,
       onOpenChange,
     },
-    ref
+    forwardedRef
   ) => {
     const [isOpen, setIsOpen] = useState(false);
     const internalId = React.useId();
@@ -178,7 +178,7 @@ export const Select = React.forwardRef<HTMLDivElement, SelectProps>(
     };
 
     return (
-      <div ref={ref} className={`flex flex-col gap-1.5 w-full ${className}`}>
+      <div ref={forwardedRef} className={`flex flex-col gap-1.5 w-full ${className}`}>
         {label && (
           <label className="text-[11px] font-bold text-base-500 uppercase tracking-widest px-1">
             {label}
@@ -214,6 +214,7 @@ export const Select = React.forwardRef<HTMLDivElement, SelectProps>(
           {isOpen && (
             <Portal>
               <motion.div
+                key="select-menu"
                 ref={menuRef}
                 initial={{ opacity: 0, y: -10, scale: 0.98 }}
                 animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -237,9 +238,9 @@ export const Select = React.forwardRef<HTMLDivElement, SelectProps>(
                     />
                   </div>
                 )}
-                
-                <ul 
-                  ref={listRef} 
+
+                <ul
+                  ref={listRef}
                   role="listbox"
                   aria-labelledby={internalId}
                   className="max-h-60 overflow-y-auto py-1 custom-scrollbar"

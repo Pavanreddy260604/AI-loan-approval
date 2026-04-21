@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useCallback } from 'react';
 import { colors, spacing, borderRadius, shadows, transitions } from '../../../lib/design-tokens';
+import { Portal } from '../atoms/Portal';
 
 /**
  * Drawer Component Props
@@ -319,7 +320,7 @@ export const Drawer = React.forwardRef<HTMLDivElement, DrawerProps>(
     };
 
     return (
-      <>
+      <Portal>
         {/* Overlay */}
         <div
           style={overlayStyles}
@@ -429,7 +430,7 @@ export const Drawer = React.forwardRef<HTMLDivElement, DrawerProps>(
             }
           `}
         </style>
-      </>
+      </Portal>
     );
   }
 );

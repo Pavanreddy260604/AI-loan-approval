@@ -38,6 +38,8 @@ export * from "./gradient-dots";
 export * from "./friction-gate";
 export * from "./radial-orbital-timeline";
 export * from "./skeleton-grid";
+export { OtpInput, ResendButton } from './otp-input';
+export { UploadProgress } from './upload-progress';
 export * from "./section-title";
 
 // Re-export specific utilities

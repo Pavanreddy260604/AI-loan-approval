@@ -1,47 +1,23 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { colors, spacing, borderRadius, shadows } from '../../../lib/design-tokens';
-import { transitions as eliteTransitions } from '../../../lib/animations/transitions';
 
 /**
- * Card Component Props
+ * Premium Banking Card Component
  * 
- * Molecular card component following the design system specification.
- * Supports optional header, body, and footer sections with customizable styling options.
- * 
- * **Validates: Requirements 3.1, 14.1, 14.8, 14.10**
+ * Double-Bezel (Doppelrand) architecture for machined hardware aesthetic.
+ * Outer shell + inner core with concentric curves and hairline precision.
  */
 export interface CardProps {
-  /** Card content */
   children: React.ReactNode;
-  
-  /** Optional header section */
   header?: React.ReactNode;
-  
-  /** Optional footer section */
   footer?: React.ReactNode;
-  
-  /** Enable hover effects */
   hoverable?: boolean;
-  
-  /** Apply padding */
   padded?: boolean;
-  
-  /** Show border */
-  border?: boolean;
-  
-  /** Additional CSS classes */
+  border?: boolean; // Deprecated: kept for backward compatibility
   className?: string;
+  variant?: 'default' | 'elevated' | 'glass';
 }
 
-/**
- * Card Component
- * 
- * A flexible card container component with optional header, body, and footer sections.
- * Supports hover effects, padding, and border options. Uses framer-motion for elite feedback.
- * 
- * Performance: Memoized to prevent unnecessary re-renders (Req 13.2, 13.4)
- */
 export const Card = React.memo(React.forwardRef<HTMLDivElement, CardProps>(
   (
     {
@@ -50,68 +26,101 @@ export const Card = React.memo(React.forwardRef<HTMLDivElement, CardProps>(
       footer,
       hoverable = false,
       padded = true,
-      border = true,
+      border: _border, // Deprecated but accepted for backward compatibility
       className = '',
+      variant = 'default',
     },
     ref
   ) => {
-    // Base card styles
-    const baseStyles: React.CSSProperties = {
-      backgroundColor: colors.base[950],
-      borderRadius: borderRadius.lg,
-      display: 'flex',
-      flexDirection: 'column',
-      position: 'relative' as const,
-      zIndex: 1,
-      ...(border && {
-        border: `1px solid ${colors.base[800]}`,
-      }),
+    // Variant-specific shell styling - uses CSS variables for theming
+    const shellStyles = {
+      default: '',
+      elevated: 'shadow-lg',
+      glass: 'backdrop-blur-xl',
     };
 
-    // Combine card styles
-    const cardStyles: React.CSSProperties = {
-      ...baseStyles,
-    };
+    const headerClasses = padded
+      ? 'px-5 py-3.5 border-b'
+      : 'border-b';
 
-    // Header styles
-    const headerStyles: React.CSSProperties = {
-      padding: padded ? `${spacing[4]} ${spacing[6]}` : '0px',
-      borderBottom: `1px solid ${colors.base[800]}`,
-    };
+    const bodyClasses = padded ? 'p-5 flex-1' : 'flex-1';
 
-    // Body styles
-    const bodyStyles: React.CSSProperties = {
-      padding: padded ? spacing[6] : '0px',
-      flex: 1,
-    };
-
-    // Footer styles
-    const footerStyles: React.CSSProperties = {
-      padding: padded ? `${spacing[4]} ${spacing[6]}` : '0px',
-      borderTop: `1px solid ${colors.base[800]}`,
-    };
+    const footerClasses = padded
+      ? 'px-5 py-3.5 border-t'
+      : 'border-t';
 
     return (
       <motion.div
         ref={ref as any}
-        className={className}
-        style={cardStyles}
-        whileHover={hoverable ? { 
-            y: -4, 
-            boxShadow: shadows.xl,
-            borderColor: colors.base[500],
-            transition: eliteTransitions.stiff
+        style={{
+          padding: '3px',
+          borderRadius: '20px',
+          backgroundColor: variant === 'glass' ? 'rgba(255,255,255,0.1)' : 'var(--card-shell-bg)',
+          boxShadow: shellStyles[variant],
+          '--tw-ring-color': 'var(--card-shell-ring)',
+        } as React.CSSProperties}
+        className={[
+          'ring-1',
+          className,
+        ].join(' ')}
+        data-card-shell
+        whileHover={hoverable ? {
+          y: -2,
+          transition: { type: 'spring', stiffness: 500, damping: 35 }
         } : {}}
-        transition={eliteTransitions.base}
+        transition={{ duration: 0.3, ease: [0.32, 0.72, 0, 1] }}
       >
-        {header ? <div style={headerStyles}>{header}</div> : null}
-        <div style={bodyStyles}><>{children}</></div>
-        {footer ? <div style={footerStyles}>{footer}</div> : null}
+        {/* Inner Core - Machined Content Container */}
+        <div
+          style={{
+            borderRadius: '17px',
+            backgroundColor: variant === 'glass' ? 'rgba(255,255,255,0.8)' : 'var(--card-core-bg)',
+            boxShadow: 'inset 0 1px 1px var(--card-core-shadow-inset)',
+          }}
+          className="flex flex-col overflow-hidden"
+        >
+          {header ? <div className={headerClasses} style={{ borderColor: 'var(--card-border)' }}>{header}</div> : null}
+          <div className={bodyClasses}>{children}</div>
+          {footer ? <div className={footerClasses} style={{ borderColor: 'var(--card-border)' }}>{footer}</div> : null}
+        </div>
       </motion.div>
     );
   }
 ));
 
 Card.displayName = 'Card';
+
+/**
+ * Premium Banking Card Shell
+ * 
+ * Use for wrapping multiple related cards or creating distinct content zones
+ * with the machined Double-Bezel aesthetic.
+ */
+export const CardShell: React.FC<{
+  children: React.ReactNode;
+  className?: string;
+  glow?: boolean;
+}> = ({ children, className = '', glow = false }) => (
+  <div
+    style={{
+      padding: '4px',
+      borderRadius: '24px',
+      background: 'linear-gradient(to bottom, var(--card-shell-bg), rgba(0,0,0,0.02))',
+      boxShadow: glow ? '0 0 60px -12px rgba(59,130,246,0.15)' : undefined,
+    }}
+    className={['ring-1', className].join(' ')}
+    data-card-shell
+  >
+    <div
+      style={{
+        backgroundColor: 'var(--card-core-bg)',
+        borderRadius: '20px',
+        boxShadow: 'inset 0 1px 2px var(--card-core-shadow-inset)',
+      }}
+    >
+      {children}
+    </div>
+  </div>
+);
 
 export default Card;

@@ -1,5 +1,5 @@
 import React from 'react';
-import { colors, spacing, typography, borderRadius } from '../../../lib/design-tokens';
+import { colors } from '../../../lib/design-tokens';
 
 /**
  * Badge Component Props
@@ -46,69 +46,66 @@ export const Badge = React.forwardRef<HTMLSpanElement, BadgeProps>(
     },
     ref
   ) => {
-    // Base badge styles
+    // Base badge styles - simpler
     const baseStyles = {
       display: 'inline-flex',
       alignItems: 'center',
       justifyContent: 'center',
-      fontWeight: typography.fontWeights.medium,
-      borderRadius: borderRadius.md,
+      fontWeight: 500,
+      borderRadius: '4px',
       border: '1px solid',
       whiteSpace: 'nowrap' as const,
       fontFamily: 'inherit',
-      lineHeight: typography.lineHeights.tight,
+      lineHeight: 1,
     };
 
-    // Tone variant styles
+    // Tone variant styles - solid, simple colors
     const toneStyles = {
       primary: {
-        backgroundColor: `${colors.primary[600]}1A`, // 10% opacity
-        color: colors.primary[400],
-        borderColor: `${colors.primary[600]}33`, // 20% opacity
+        backgroundColor: colors.primary[600],
+        color: '#ffffff',
+        borderColor: colors.primary[600],
       },
       success: {
-        backgroundColor: `${colors.success[500]}1A`, // 10% opacity
-        color: colors.success[400],
-        borderColor: `${colors.success[500]}33`, // 20% opacity
+        backgroundColor: colors.success[500],
+        color: '#ffffff',
+        borderColor: colors.success[500],
       },
       warning: {
-        backgroundColor: `${colors.warning[500]}1A`, // 10% opacity
-        color: colors.warning[400],
-        borderColor: `${colors.warning[500]}33`, // 20% opacity
+        backgroundColor: colors.warning[500],
+        color: '#0f172a',
+        borderColor: colors.warning[500],
       },
       danger: {
-        backgroundColor: `${colors.danger[500]}1A`, // 10% opacity
-        color: colors.danger[400],
-        borderColor: `${colors.danger[500]}33`, // 20% opacity
+        backgroundColor: colors.danger[500],
+        color: '#ffffff',
+        borderColor: colors.danger[500],
       },
       ghost: {
-        backgroundColor: colors.base[900],
-        color: colors.base[400],
-        borderColor: colors.base[800],
+        backgroundColor: 'rgb(var(--tw-base-800))',
+        color: 'rgb(var(--tw-base-300))',
+        borderColor: 'rgb(var(--tw-base-700))',
       },
       info: {
-        backgroundColor: `${colors.info[500]}1A`, // 10% opacity
-        color: colors.info[400],
-        borderColor: `${colors.info[500]}33`, // 20% opacity
+        backgroundColor: colors.info[500],
+        color: '#ffffff',
+        borderColor: colors.info[500],
       },
     };
 
-    // Size styles
+    // Size styles - simpler, no fixed heights
     const sizeStyles = {
       xs: {
-        padding: `${spacing[1]} ${spacing[2]}`,
-        fontSize: typography.fontSizes.xs,
-        height: '20px',
+        padding: '2px 8px',
+        fontSize: '11px',
       },
       sm: {
-        padding: `${spacing[1]} ${spacing[3]}`,
-        fontSize: typography.fontSizes.sm,
-        height: '24px',
+        padding: '4px 10px',
+        fontSize: '12px',
       },
       md: {
-        padding: `${spacing[2]} ${spacing[4]}`,
-        fontSize: typography.fontSizes.base,
-        height: '28px',
+        padding: '6px 12px',
+        fontSize: '13px',
       },
     };
 

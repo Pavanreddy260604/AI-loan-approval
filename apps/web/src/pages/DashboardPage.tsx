@@ -7,16 +7,15 @@ import {
   Clock,
   CheckCircle2,
   XCircle,
-  Search,
   Info,
   Database,
   Brain,
   Activity,
-  ShieldAlert
+  ShieldAlert,
+  Loader2
 } from "lucide-react";
 import {
   EliteCard as Card,
-  EliteBadge as Badge,
   EliteButton as Button,
   RiskTag,
   FrictionGate,
@@ -26,7 +25,9 @@ import {
   EliteInlineError as InlineError
 } from "../components/ui";
 import { apiFetch, type DashboardResponse, type PendingPrediction } from "../lib/api";
+import { deriveLoanName } from "../lib/loan-names";
 import { useKeyboardActions } from "../hooks/useKeyboardActions";
+import { useLoadingState } from "../hooks/useLoadingState";
 import { useUndo } from "../lib/undo-provider";
 import { type AuthContextValue } from "../App";
 
@@ -49,30 +50,125 @@ function timeAgo(dateStr: string | null | undefined): string {
   return `${Math.floor(hrs / 24)}d ago`;
 }
 
-function deriveLoanName(features: Record<string, any>): string {
-  // Try common field names for a human-readable label
-  const nameKeys = ["loan_type", "purpose", "loan_purpose", "product", "description", "name", "applicant_name"];
-  for (const key of nameKeys) {
-    if (features[key] && typeof features[key] === "string") {
-      return features[key];
-    }
-  }
-  // Fallback: show first string feature
-  for (const val of Object.values(features)) {
-    if (typeof val === "string" && val.length > 2 && val.length < 60) return val;
-  }
-  return "Loan Application";
-}
-
 function deriveLoanAmount(features: Record<string, any>): number {
-  const amountKeys = ["loan_amount", "amount", "loan_amnt", "funded_amnt", "total_amount", "principal", "credit_amount"];
-  for (const key of amountKeys) {
+  // Strategy 1: Direct loan amount fields (most accurate)
+  const loanAmountKeys = [
+    "loan_amount", "amount", "loan_amnt", "funded_amnt", "total_amount", "principal",
+    "LoanAmount", "loanAmount", "Loan_Amount", "RequestedAmount", "loanamount"
+  ];
+  for (const key of loanAmountKeys) {
     const val = features[key];
     if (val !== undefined && val !== null) {
       const num = typeof val === "string" ? parseFloat(val) : val;
       if (!isNaN(num) && num > 0) return num;
     }
   }
+
+  // Strategy 2: Calculate Aggregate Asset Value (industry standard)
+  // Based on asset depletion lending: sum all asset categories with appropriate weightings
+  let totalAssetValue = 0;
+  const assetValues: Record<string, number> = {};
+
+  // Cash & Bank Assets (100% value)
+  const cashKeys = ["bank_asset_value", "BankAssetValue", "savings", "checking", "cash", "Bank_Asset"];
+  for (const key of cashKeys) {
+    if (features[key] !== undefined) {
+      const val = typeof features[key] === "string" ? parseFloat(features[key]) : features[key];
+      if (!isNaN(val) && val > 0) {
+        assetValues.cash = (assetValues.cash || 0) + val;
+      }
+    }
+  }
+
+  // Residential Assets (100% equity value)
+  const residentialKeys = ["residential_assets", "ResidentialAssets", "home_equity", "property_value"];
+  for (const key of residentialKeys) {
+    if (features[key] !== undefined) {
+      const val = typeof features[key] === "string" ? parseFloat(features[key]) : features[key];
+      if (!isNaN(val) && val > 0) {
+        assetValues.residential = (assetValues.residential || 0) + val;
+      }
+    }
+  }
+
+  // Commercial Assets (100% value)
+  const commercialKeys = ["commercial_assets", "CommercialAssets", "business_assets"];
+  for (const key of commercialKeys) {
+    if (features[key] !== undefined) {
+      const val = typeof features[key] === "string" ? parseFloat(features[key]) : features[key];
+      if (!isNaN(val) && val > 0) {
+        assetValues.commercial = (assetValues.commercial || 0) + val;
+      }
+    }
+  }
+
+  // Luxury Assets (70% value - less liquid)
+  const luxuryKeys = ["luxury_assets", "LuxuryAssets", "luxury_goods", "collectibles"];
+  for (const key of luxuryKeys) {
+    if (features[key] !== undefined) {
+      const val = typeof features[key] === "string" ? parseFloat(features[key]) : features[key];
+      if (!isNaN(val) && val > 0) {
+        assetValues.luxury = (assetValues.luxury || 0) + val * 0.7; // 70% weighting
+      }
+    }
+  }
+
+  // Investments (80% value - market volatility discount)
+  const investmentKeys = ["investments", "stocks", "bonds", "mutual_funds", "portfolio"];
+  for (const key of investmentKeys) {
+    if (features[key] !== undefined) {
+      const val = typeof features[key] === "string" ? parseFloat(features[key]) : features[key];
+      if (!isNaN(val) && val > 0) {
+        assetValues.investments = (assetValues.investments || 0) + val * 0.8; // 80% weighting
+      }
+    }
+  }
+
+  // Sum all weighted assets
+  totalAssetValue = Object.values(assetValues).reduce((sum, val) => sum + val, 0);
+
+  // Strategy 3: Income-based calculation (annual income × multiplier)
+  // Industry uses 3x-5x annual income for loan amount estimation
+  const incomeKeys = ["applicant_income", "ApplicantIncome", "income", "annual_income", "salary", "gross_income"];
+  let annualIncome = 0;
+  for (const key of incomeKeys) {
+    if (features[key] !== undefined) {
+      const val = typeof features[key] === "string" ? parseFloat(features[key]) : features[key];
+      if (!isNaN(val) && val > 0) {
+        // If value seems monthly (too small for annual), multiply by 12
+        annualIncome = val > 100000 ? val : val * 12;
+        break;
+      }
+    }
+  }
+  const incomeBasedValue = annualIncome * 4; // 4x annual income multiplier
+
+  // Return the best available value (priority: direct loan amount > aggregate assets > income-based)
+  if (totalAssetValue > 0) {
+    // If we have both asset value and income, use weighted combination
+    if (incomeBasedValue > 0) {
+      // 60% asset-based, 40% income-based weighting
+      return Math.round(totalAssetValue * 0.6 + incomeBasedValue * 0.4);
+    }
+    return Math.round(totalAssetValue);
+  }
+
+  if (incomeBasedValue > 0) {
+    return Math.round(incomeBasedValue);
+  }
+
+  // Fallback: Try to find any numeric field that looks like a value
+  for (const [key, val] of Object.entries(features)) {
+    const lowerKey = key.toLowerCase();
+    if ((lowerKey.includes('asset') || lowerKey.includes('value') || lowerKey.includes('worth'))
+        && (typeof val === 'number' || typeof val === 'string')) {
+      const num = typeof val === "string" ? parseFloat(val) : val;
+      if (!isNaN(num) && num > 0 && num < 100000000) { // Sanity check
+        return Math.round(num);
+      }
+    }
+  }
+
   return 0;
 }
 
@@ -103,7 +199,7 @@ interface QueueItem {
 function predictionToQueueItem(p: PendingPrediction): QueueItem {
   return {
     id: p.id,
-    name: deriveLoanName(p.features),
+    name: deriveLoanName(p.features, p.id),
     amount: formatCurrency(deriveLoanAmount(p.features)),
     risk: deriveRiskScore(p),
     confidence: Math.round(p.probability * 100),
@@ -112,9 +208,10 @@ function predictionToQueueItem(p: PendingPrediction): QueueItem {
   };
 }
 
-export function DashboardPage(_props: { auth: AuthContextValue }) {
+export function DashboardPage({ auth }: { auth: AuthContextValue }) {
   const { addAction } = useUndo();
   const queryClient = useQueryClient();
+  const { isLoading: isDecisionLoading, execute: executeDecision } = useLoadingState();
 
   const { data, isLoading, error } = useQuery<DashboardResponse>({
     queryKey: ["dashboard"],
@@ -125,7 +222,8 @@ export function DashboardPage(_props: { auth: AuthContextValue }) {
   // Local queue state for optimistic updates (remove on approve/reject, restore on undo)
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set());
-  const [searchQuery, setSearchQuery] = useState("");
+  const [queuePage, setQueuePage] = useState(1);
+  const queuePageSize = 10;
   const [riskFilter, setRiskFilter] = useState<"all" | "high" | "medium" | "low">("all");
 
   // Sync API data into local queue when data changes
@@ -138,46 +236,52 @@ export function DashboardPage(_props: { auth: AuthContextValue }) {
     }
   }, [data?.pendingPredictions, dismissedIds]);
 
-  const handleDecision = (loan: QueueItem, type: "approve" | "reject") => {
-    const message = type === "approve" ? `Approved ${loan.name}` : `Rejected ${loan.name}`;
+  const handleDecision = async (loan: QueueItem, type: "approve" | "reject") => {
+    const actionId = `${loan.id}-${type}`;
+    
+    await executeDecision(actionId, async () => {
+      const message = type === "approve" ? `Approved ${loan.name}` : `Rejected ${loan.name}`;
 
-    addAction(
-      message,
-      async () => {
-        await apiFetch(`/predictions/${loan.id}/decision`, {
-          method: "POST",
-          body: { decision: type },
-        });
-        // Refresh dashboard after decision
-        queryClient.invalidateQueries({ queryKey: ["dashboard"] });
-      },
-      () => {
-        // Undo: restore item, remove from dismissed
-        setDismissedIds((curr) => {
-          const next = new Set(curr);
-          next.delete(loan.id);
-          return next;
-        });
-      }
-    );
+      addAction(
+        message,
+        async () => {
+          await apiFetch(`/predictions/${loan.id}/decision`, {
+            method: "POST",
+            token: auth.session?.token,
+            body: { decision: type },
+          });
+          // Refresh dashboard after decision
+          queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+        },
+        () => {
+          // Undo: restore item, remove from dismissed
+          setDismissedIds((curr) => {
+            const next = new Set(curr);
+            next.delete(loan.id);
+            return next;
+          });
+        }
+      );
 
-    // Optimistic: remove from queue, add to dismissed
-    setQueue((curr) => curr.filter((l) => l.id !== loan.id));
-    setDismissedIds((curr) => new Set(curr).add(loan.id));
+      // Optimistic: remove from queue, add to dismissed
+      setQueue((curr) => curr.filter((l) => l.id !== loan.id));
+      setDismissedIds((curr) => new Set(curr).add(loan.id));
+    });
   };
 
-  // Filtered queue for search + risk filter
+  // Filtered queue - matches RiskTag thresholds: Low<30, Med 30-69, High≥70
   const filteredQueue = useMemo(() => {
-    let items = queue;
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      items = items.filter(l => l.name.toLowerCase().includes(q) || l.id.toLowerCase().includes(q) || l.amount.toLowerCase().includes(q));
-    }
-    if (riskFilter === "high") items = items.filter(l => l.risk > 70);
-    else if (riskFilter === "medium") items = items.filter(l => l.risk >= 40 && l.risk <= 70);
-    else if (riskFilter === "low") items = items.filter(l => l.risk < 40);
-    return items;
-  }, [queue, searchQuery, riskFilter]);
+    if (riskFilter === "all") return queue;
+    if (riskFilter === "high") return queue.filter(l => l.risk >= 70);
+    if (riskFilter === "medium") return queue.filter(l => l.risk >= 30 && l.risk < 70);
+    if (riskFilter === "low") return queue.filter(l => l.risk < 30);
+    return queue;
+  }, [queue, riskFilter]);
+
+  // Reset pagination whenever the visible queue changes
+  useEffect(() => {
+    setQueuePage(1);
+  }, [riskFilter]);
 
   const { setSelectedIndex } = useKeyboardActions(
     filteredQueue,
@@ -227,16 +331,17 @@ export function DashboardPage(_props: { auth: AuthContextValue }) {
     {
       header: 'Value',
       accessor: 'amount',
-      className: 'text-sm font-bold text-base-200 tabular-nums',
+      className: 'text-sm font-bold text-base-200 tabular-nums hidden sm:table-cell',
     },
     {
-      header: 'Risk Index',
+      header: 'Risk',
       accessor: 'risk',
       render: (row: QueueItem) => <RiskTag score={row.risk} />,
     },
     {
       header: 'Confidence',
       accessor: 'confidence',
+      className: 'hidden md:table-cell',
       render: (row: QueueItem) => (
         <div className="flex items-baseline gap-2">
           <span className={`text-sm font-bold tabular-nums ${row.confidence < 70 ? 'text-warning' : 'text-base-300'}`}>
@@ -247,31 +352,59 @@ export function DashboardPage(_props: { auth: AuthContextValue }) {
       ),
     },
     {
-      header: 'Wait Time',
+      header: 'Wait',
       accessor: 'time',
-      className: 'text-xs text-base-500 font-medium',
+      className: 'text-xs text-base-500 font-medium hidden lg:table-cell',
     },
     {
       header: 'Actions',
       accessor: (row: QueueItem) => row.id,
+      align: 'right',
+      width: '264px',
       className: 'text-right',
-      render: (row: QueueItem) => (
-        <div className="flex items-center justify-end gap-2 group-hover:opacity-100 transition-opacity">
-          <FrictionGate confidence={row.confidence} onConfirm={() => handleDecision(row, "reject")}>
-            <button className="h-8 w-8 rounded-pro bg-danger/10 text-danger border border-danger/20 flex items-center justify-center hover:bg-danger/20 transition-all" title="Reject">
-              <XCircle size={16} />
-            </button>
-          </FrictionGate>
-          <FrictionGate confidence={row.confidence} onConfirm={() => handleDecision(row, "approve")}>
-            <button className="h-8 w-8 rounded-pro bg-success/10 text-success border border-success/20 flex items-center justify-center hover:bg-success/20 transition-all" title="Approve">
-              <CheckCircle2 size={16} />
-            </button>
-          </FrictionGate>
-          <Link to={`/app/loan/${row.id}`}>
-            <Button variant="ghost" size="xs">View Details</Button>
-          </Link>
-        </div>
-      ),
+      render: (row: QueueItem) => {
+        const rejectLoading = isDecisionLoading(`${row.id}-reject`);
+        const approveLoading = isDecisionLoading(`${row.id}-approve`);
+        const isProcessing = rejectLoading || approveLoading;
+        
+        return (
+          <div
+            className="flex min-w-[240px] flex-wrap items-center justify-end gap-2 md:flex-nowrap"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <FrictionGate confidence={row.confidence} onConfirm={() => handleDecision(row, "reject")}>
+              <button
+                type="button"
+                disabled={isProcessing}
+                className={`inline-flex h-9 items-center justify-center gap-1.5 rounded-pro border border-danger/20 bg-danger/10 px-3 text-danger transition-all touch-target
+                  ${isProcessing ? 'opacity-50 cursor-not-allowed' : 'hover:bg-danger/20 hover:border-danger/35'}`}
+                title="Reject application"
+              >
+                {rejectLoading ? <Loader2 size={14} className="animate-spin" /> : <XCircle size={14} />}
+                <span className="text-[11px] font-semibold uppercase tracking-[0.12em]">Reject</span>
+              </button>
+            </FrictionGate>
+            <FrictionGate confidence={row.confidence} onConfirm={() => handleDecision(row, "approve")}>
+              <button
+                type="button"
+                disabled={isProcessing}
+                className={`inline-flex h-9 items-center justify-center gap-1.5 rounded-pro border border-success/20 bg-success/10 px-3 text-success transition-all touch-target
+                  ${isProcessing ? 'opacity-50 cursor-not-allowed' : 'hover:bg-success/20 hover:border-success/35'}`}
+                title="Approve application"
+              >
+                {approveLoading ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
+                <span className="text-[11px] font-semibold uppercase tracking-[0.12em]">Approve</span>
+              </button>
+            </FrictionGate>
+            <Link
+              to={`/app/loan/${row.id}`}
+              className="inline-flex h-9 items-center justify-center rounded-pro border border-base-800 bg-base-950 px-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-base-300 transition-colors hover:border-primary/40 hover:text-base-50"
+            >
+              Review
+            </Link>
+          </div>
+        );
+      },
     },
   ];
 
@@ -292,42 +425,84 @@ export function DashboardPage(_props: { auth: AuthContextValue }) {
     return <InlineError message={(error as Error).message} />;
   }
 
+  const isBrandNew = (metrics?.totalDatasets ?? 0) === 0
+    && (metrics?.totalModels ?? 0) === 0
+    && (metrics?.totalPredictions ?? 0) === 0
+    && queue.length === 0
+    && highRiskCount === 0
+    && (metrics?.fraudAlerts ?? 0) === 0;
+
+  if (isBrandNew) {
+    return (
+      <div className="space-y-8 Decision-Engine-Animate">
+        <div className="rounded-lg border border-base-800 bg-base-900/40 p-8 md:p-12">
+          <p className="text-[10px] font-bold text-primary uppercase tracking-widest">Getting Started</p>
+          <h1 className="mt-2 text-2xl md:text-3xl font-bold text-base-50 tracking-tight">
+            Welcome to Originate
+          </h1>
+          <p className="mt-2 text-sm text-base-400 max-w-lg">
+            Three steps to your first automated loan decision. You can finish this in under 5 minutes with a sample CSV.
+          </p>
+          <ol className="mt-8 grid gap-4 md:grid-cols-3">
+            <li className="rounded-lg border border-base-800 bg-base-950 p-5">
+              <span className="inline-flex items-center justify-center h-7 w-7 rounded-full bg-primary/10 text-primary text-xs font-bold">1</span>
+              <p className="mt-3 text-sm font-semibold text-base-50">Upload a dataset</p>
+              <p className="mt-1 text-xs text-base-500">Bring a CSV or XLSX of historical loans — the target column becomes the decision label.</p>
+              <Link to="/app/datasets" className="mt-4 inline-block text-[11px] font-bold text-primary uppercase tracking-widest hover:underline">Upload dataset →</Link>
+            </li>
+            <li className="rounded-lg border border-base-800 bg-base-950 p-5">
+              <span className="inline-flex items-center justify-center h-7 w-7 rounded-full bg-base-800 text-base-300 text-xs font-bold">2</span>
+              <p className="mt-3 text-sm font-semibold text-base-50">Train a model</p>
+              <p className="mt-1 text-xs text-base-500">Configure the columns, set the outcome, and kick off training. Takes a few minutes per dataset.</p>
+              <Link to="/app/models" className="mt-4 inline-block text-[11px] font-bold text-base-400 uppercase tracking-widest hover:text-primary">Models →</Link>
+            </li>
+            <li className="rounded-lg border border-base-800 bg-base-950 p-5">
+              <span className="inline-flex items-center justify-center h-7 w-7 rounded-full bg-base-800 text-base-300 text-xs font-bold">3</span>
+              <p className="mt-3 text-sm font-semibold text-base-50">Run a prediction</p>
+              <p className="mt-1 text-xs text-base-500">Score a single loan or batch-upload a list. Decisions land here for human review.</p>
+              <Link to="/app/predict" className="mt-4 inline-block text-[11px] font-bold text-base-400 uppercase tracking-widest hover:text-primary">Predict →</Link>
+            </li>
+          </ol>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-8 Decision-Engine-Animate">
       {/* KPI Cards — Real Data */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-0 border border-base-800 rounded-lg overflow-hidden shadow-2xl">
-        <Card className="rounded-none border-0 bg-danger/5" padded={true}>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <Card border className={highRiskCount > 0 ? "border-l-4 border-l-danger" : ""}>
           <div className="flex items-center gap-3">
-             <div className="h-10 w-10 rounded bg-danger/10 border border-danger/20 flex items-center justify-center text-danger shrink-0">
-                <AlertCircle size={20} />
-             </div>
+             <AlertCircle size={20} className={highRiskCount > 0 ? "text-danger" : "text-base-500"} />
              <div>
-                <span className="text-[10px] font-bold text-danger uppercase tracking-widest leading-none">High Priority</span>
-                <p className="text-xl font-bold text-base-50 tracking-tight">
-                  {highRiskCount > 0 ? `${highRiskCount} High-Risk` : "No High-Risk"} {highRiskCount === 1 ? "Loan" : "Loans"}
+                <p className="text-sm text-base-400">High Risk Loans</p>
+                <p className="text-xl font-semibold text-base-50">
+                  {highRiskCount > 0 ? highRiskCount : "None"}
                 </p>
+                <p className="text-xs text-base-600 mt-0.5">Loans with score ≥70%</p>
              </div>
           </div>
         </Card>
-        <Card className="rounded-none border-y-0 border-x border-base-800 bg-primary/5" padded={true}>
+        <Card border>
           <div className="flex items-center gap-3">
-             <div className="h-10 w-10 rounded bg-primary/10 border border-primary/20 flex items-center justify-center text-primary shrink-0">
-                <TrendingUp size={20} />
-             </div>
+             <TrendingUp size={20} className="text-primary" />
              <div>
-                <span className="text-[10px] font-bold text-primary uppercase tracking-widest leading-none">Total Predictions</span>
-                <p className="text-xl font-bold text-base-50 tracking-tight">{metrics?.totalPredictions ?? 0} Scored</p>
+                <p className="text-sm text-base-400">Loans Scored</p>
+                <p className="text-xl font-semibold text-base-50">{metrics?.totalPredictions ?? 0}</p>
+                <p className="text-xs text-base-600 mt-0.5">Total predictions run</p>
              </div>
           </div>
         </Card>
-        <Card className="rounded-none border-0 bg-base-900/50" padded={true}>
+        <Card border>
           <div className="flex items-center gap-3">
-             <div className="h-10 w-10 rounded bg-base-950 border border-base-800 flex items-center justify-center text-base-500 shrink-0">
-                <Clock size={20} />
-             </div>
+             <Clock size={20} className="text-base-500" />
              <div>
-                <span className="text-[10px] font-bold text-base-500 uppercase tracking-widest leading-none">Avg Wait Time</span>
-                <p className="text-xl font-bold text-base-50 tracking-tight">{avgWaitTime} Avg Wait</p>
+                <p className="text-sm text-base-400">Avg Review Time</p>
+                <p className="text-xl font-semibold text-base-50">
+                  {avgWaitTime === "—" ? "—" : avgWaitTime}
+                </p>
+                <p className="text-xs text-base-600 mt-0.5">Time to decision</p>
              </div>
           </div>
         </Card>
@@ -335,54 +510,66 @@ export function DashboardPage(_props: { auth: AuthContextValue }) {
 
       {/* Platform Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Card border={true} padded={true} className="text-center">
-          <Database size={16} className="mx-auto text-primary mb-2" />
-          <p className="text-lg font-bold text-base-50 tabular-nums">{metrics?.totalDatasets ?? 0}</p>
-          <p className="text-[9px] font-bold text-base-600 uppercase tracking-widest">Datasets</p>
+        <Card border className="p-4">
+          <div className="flex items-start gap-3">
+            <div className="w-8 h-8 flex items-center justify-center shrink-0">
+              <Database size={18} className="text-primary" />
+            </div>
+            <div>
+              <p className="text-lg font-semibold text-base-50 leading-tight">{metrics?.totalDatasets ?? 0}</p>
+              <p className="text-xs text-base-500 mt-0.5">Datasets</p>
+            </div>
+          </div>
         </Card>
-        <Card border={true} padded={true} className="text-center">
-          <Brain size={16} className="mx-auto text-primary mb-2" />
-          <p className="text-lg font-bold text-base-50 tabular-nums">{metrics?.totalModels ?? 0}</p>
-          <p className="text-[9px] font-bold text-base-600 uppercase tracking-widest">Models</p>
+        <Card border className="p-4">
+          <div className="flex items-start gap-3">
+            <div className="w-8 h-8 flex items-center justify-center shrink-0">
+              <Brain size={18} className="text-primary" />
+            </div>
+            <div>
+              <p className="text-lg font-semibold text-base-50 leading-tight">{metrics?.totalModels ?? 0}</p>
+              <p className="text-xs text-base-500 mt-0.5">Models</p>
+            </div>
+          </div>
         </Card>
-        <Card border={true} padded={true} className="text-center">
-          <Activity size={16} className="mx-auto text-primary mb-2" />
-          <p className="text-lg font-bold text-base-50 tabular-nums">{queue.length}</p>
-          <p className="text-[9px] font-bold text-base-600 uppercase tracking-widest">Pending Review</p>
+        <Card border className="p-4">
+          <div className="flex items-start gap-3">
+            <div className="w-8 h-8 flex items-center justify-center shrink-0">
+              <Activity size={18} className="text-primary" />
+            </div>
+            <div>
+              <p className="text-lg font-semibold text-base-50 leading-tight">{queue.length}</p>
+              <p className="text-xs text-base-500 mt-0.5">Pending</p>
+            </div>
+          </div>
         </Card>
-        <Card border={true} padded={true} className="text-center">
-          <ShieldAlert size={16} className="mx-auto text-warning mb-2" />
-          <p className="text-lg font-bold text-base-50 tabular-nums">{metrics?.fraudAlerts ?? 0}</p>
-          <p className="text-[9px] font-bold text-base-600 uppercase tracking-widest">Fraud Alerts</p>
+        <Card border className="p-4">
+          <div className="flex items-start gap-3">
+            <div className="w-8 h-8 flex items-center justify-center shrink-0">
+              <ShieldAlert size={18} className="text-warning" />
+            </div>
+            <div>
+              <p className="text-lg font-semibold text-base-50 leading-tight">{metrics?.fraudAlerts ?? 0}</p>
+              <p className="text-xs text-base-500 mt-0.5">Alerts</p>
+            </div>
+          </div>
         </Card>
       </div>
 
       {/* Pending Loans Queue */}
       <div className="space-y-4">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-           <h2 className="text-xl font-bold tracking-tight">Pending Loans</h2>
-           <div className="flex items-center gap-2">
-              <div className="relative">
-                <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-base-600" />
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search loans..."
-                  className="h-8 w-44 pl-8 pr-3 bg-base-950 border border-base-800 rounded-lg text-xs text-base-200 placeholder:text-base-700 focus:outline-none focus:border-primary/50 transition-colors"
-                />
-              </div>
-              <select
-                value={riskFilter}
-                onChange={(e) => setRiskFilter(e.target.value as "all" | "high" | "medium" | "low")}
-                className="h-8 px-3 bg-base-950 border border-base-800 rounded-lg text-xs text-base-200 focus:outline-none focus:border-primary/50 transition-colors cursor-pointer"
-              >
-                <option value="all">All Risk</option>
-                <option value="high">High Risk</option>
-                <option value="medium">Medium Risk</option>
-                <option value="low">Low Risk</option>
-              </select>
-           </div>
+           <h2 className="text-lg sm:text-xl font-bold tracking-tight">Pending Loans</h2>
+           <select
+             value={riskFilter}
+             onChange={(e) => setRiskFilter(e.target.value as "all" | "high" | "medium" | "low")}
+             className="h-9 px-3 bg-base-950 border border-base-800 rounded-lg text-sm text-base-200 focus:outline-none focus:border-primary/50 transition-colors cursor-pointer w-full sm:w-auto"
+           >
+             <option value="all">All Loans ({queue.length})</option>
+             <option value="high">High Risk ≥70% ({queue.filter(l => l.risk >= 70).length})</option>
+             <option value="medium">Medium Risk 30-69% ({queue.filter(l => l.risk >= 30 && l.risk < 70).length})</option>
+             <option value="low">Low Risk &lt;30% ({queue.filter(l => l.risk < 30).length})</option>
+           </select>
         </div>
 
         {queue.length === 0 ? (
@@ -398,68 +585,67 @@ export function DashboardPage(_props: { auth: AuthContextValue }) {
           </div>
         ) : filteredQueue.length === 0 ? (
           <div className="py-12 text-center border border-base-800 rounded-lg bg-base-900/20">
-            <p className="text-sm text-base-400">No loans match your search.</p>
-            <button onClick={() => { setSearchQuery(""); setRiskFilter("all"); }} className="text-xs text-primary hover:underline mt-2">
-              Clear filters
+            <p className="text-sm text-base-400">No loans match your filter.</p>
+            <button onClick={() => { setRiskFilter("all"); }} className="text-xs text-primary hover:underline mt-2">
+              Clear filter
             </button>
           </div>
         ) : (
-          <Table
-            data={filteredQueue}
-            columns={columns}
-            loading={isLoading}
-            pagination={{
-              currentPage: 1,
-              totalPages: Math.ceil(filteredQueue.length / 10),
-              pageSize: 10,
-              totalItems: filteredQueue.length,
-              onPageChange: () => {},
-            }}
-            onRowClick={(_row, idx) => setSelectedIndex(idx)}
-          />
+          <div className="-mx-4 sm:mx-0 overflow-x-auto">
+            <Table
+              data={filteredQueue.slice((queuePage - 1) * queuePageSize, queuePage * queuePageSize)}
+              columns={columns}
+              loading={isLoading}
+              pagination={{
+                currentPage: queuePage,
+                totalPages: Math.max(1, Math.ceil(filteredQueue.length / queuePageSize)),
+                pageSize: queuePageSize,
+                totalItems: filteredQueue.length,
+                onPageChange: (page) => setQueuePage(page),
+              }}
+              onRowClick={(_row, idx) => setSelectedIndex(((queuePage - 1) * queuePageSize) + idx)}
+              className="min-w-[920px] sm:min-w-0"
+            />
+          </div>
         )}
       </div>
 
       {/* Model Performance + Recent Decisions */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <Card border={true} padded={false} className="lg:col-span-2">
-           <div className="p-6 border-b border-base-800 flex items-center justify-between">
-              <h3 className="font-bold tracking-tight">Active Model Performance</h3>
-              {activeModel ? (
-                <Badge tone="success">{activeModel.championFamily || "Default"}</Badge>
-              ) : (
-                <Badge tone="neutral">No Models</Badge>
-              )}
+      <div className="grid grid-cols-1 items-stretch lg:grid-cols-3 gap-6 lg:gap-8">
+        <Card border className="h-full lg:col-span-2">
+           <div className="p-4 border-b border-base-800">
+              <h3 className="font-semibold">Model Performance</h3>
+              {activeModel && <p className="text-sm text-base-500 mt-0.5">{activeModel.championFamily || "Default"}</p>}
            </div>
            {activeModel ? (
              <>
-               <div className="p-8 h-48 flex items-center justify-center border-b border-base-800 bg-[radial-gradient(circle_at_center,rgba(99,91,255,0.05),transparent_70%)]">
-                  <div className="text-center space-y-2">
-                     <p className="text-4xl font-bold tracking-tighter text-base-50 tabular-nums">
+               <div className="p-6 flex items-center justify-center border-b border-base-800">
+                  <div className="text-center">
+                     <p className="text-3xl font-semibold text-base-50">
                        {((activeModel.championMetrics?.rocAuc ?? 0) * 100).toFixed(1)}%
                      </p>
-                     <p className="text-[10px] font-bold text-base-600 uppercase tracking-widest">ROC AUC Score</p>
+                     <p className="text-xs text-base-500 mt-1">ROC AUC</p>
                   </div>
                </div>
                <div className="grid grid-cols-3 divide-x divide-base-800">
                   <div className="p-4 text-center">
-                     <p className="text-xs font-bold text-base-300">{((activeModel.championMetrics?.accuracy ?? 0) * 100).toFixed(1)}%</p>
-                     <p className="text-[8px] font-bold text-base-600 uppercase tracking-widest">Accuracy</p>
+                     <p className="text-sm font-medium text-base-200">{((activeModel.championMetrics?.accuracy ?? 0) * 100).toFixed(1)}%</p>
+                     <p className="text-xs text-base-500 mt-0.5">Accuracy</p>
                   </div>
                   <div className="p-4 text-center">
-                     <p className="text-xs font-bold text-base-300">{(activeModel.championMetrics?.f1Score ?? 0).toFixed(2)}</p>
-                     <p className="text-[8px] font-bold text-base-600 uppercase tracking-widest">F1 Score</p>
+                     <p className="text-sm font-medium text-base-200">{(activeModel.championMetrics?.f1Score ?? 0).toFixed(2)}</p>
+                     <p className="text-xs text-base-500 mt-0.5">F1</p>
                   </div>
                   <div className="p-4 text-center">
-                     <p className="text-xs font-bold text-base-300">{(activeModel.championMetrics?.precision ?? 0).toFixed(2)}</p>
-                     <p className="text-[8px] font-bold text-base-600 uppercase tracking-widest">Precision</p>
+                     <p className="text-sm font-medium text-base-200">{(activeModel.championMetrics?.precision ?? 0).toFixed(2)}</p>
+                     <p className="text-xs text-base-500 mt-0.5">Precision</p>
                   </div>
                </div>
              </>
            ) : (
-             <div className="p-12 text-center">
+             <div className="p-8 text-center">
                 <p className="text-sm text-base-400">No trained models yet.</p>
-                <p className="text-xs text-base-600 mt-1">Upload a dataset and train a model to see performance metrics.</p>
+                <p className="text-xs text-base-500 mt-1">Train a model to see metrics.</p>
                 <Link to="/app/datasets">
                   <Button variant="outline" size="sm" className="mt-4">Upload Dataset</Button>
                 </Link>
@@ -467,56 +653,37 @@ export function DashboardPage(_props: { auth: AuthContextValue }) {
            )}
         </Card>
 
-        <Card border={true} padded={false}>
-           <div className="p-6 border-b border-base-800">
-              <h3 className="font-bold tracking-tight">Recent Decisions</h3>
+        <Card border className="h-full">
+           <div className="p-4 border-b border-base-800">
+              <h3 className="font-semibold">Recent Decisions</h3>
            </div>
-           <div className="p-6 space-y-4">
+           <div className="flex-1 p-4 space-y-3">
               {recentDecisions.length === 0 ? (
-                <p className="text-xs text-base-500 text-center py-4">No decisions yet.</p>
+                <p className="text-sm text-base-500 text-center py-4">No decisions yet.</p>
               ) : (
                 recentDecisions.slice(0, 5).map((item) => (
-                  <div key={item.id} className="flex items-start gap-3">
-                     <div className={`h-6 w-6 rounded-full flex items-center justify-center shrink-0 ${item.reviewStatus === 'approved' ? 'bg-success/10 text-success' : 'bg-danger/10 text-danger'}`}>
-                      {item.reviewStatus === 'approved' ? <CheckCircle2 size={12} /> : <XCircle size={12} />}
-                     </div>
+                  <div key={item.id} className="flex items-start gap-2">
+                      {item.reviewStatus === 'approved' ? <CheckCircle2 size={14} className="text-success shrink-0 mt-0.5" /> : <XCircle size={14} className="text-danger shrink-0 mt-0.5" />}
                      <div className="flex-1 min-w-0">
-                        <p className="text-xs font-bold text-base-50 truncate">
-                          {item.reviewStatus === 'approved' ? 'Approved' : 'Rejected'}: {deriveLoanName(item.features)}
+                        <p className="text-sm text-base-200 truncate">
+                          {deriveLoanName(item.features, item.id)}
                         </p>
-                        <p className="text-[10px] text-base-600">
-                          {Math.round(item.probability * 100)}% confidence &bull; {timeAgo(item.reviewedAt)}
+                        <p className="text-xs text-base-500">
+                          {Math.round(item.probability * 100)}% confidence • {timeAgo(item.reviewedAt)}
                         </p>
                      </div>
                   </div>
                 ))
               )}
            </div>
-           <div className="p-4 bg-base-950/50 border-t border-base-800">
+           <div className="p-4 border-t border-base-800">
               <Link to="/app/predict">
-                <Button variant="ghost" size="sm" className="w-full text-[10px] uppercase tracking-widest font-bold">
-                  Run New Prediction
+                <Button variant="outline" size="sm" className="w-full">
+                  New Prediction
                 </Button>
               </Link>
            </div>
         </Card>
-      </div>
-
-      {/* Speed Hints */}
-      <div className="flex items-center justify-center gap-6 py-4 opacity-30 hover:opacity-100 transition-opacity">
-         <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest">
-            <span className="px-1.5 py-0.5 bg-base-900 border border-base-800 rounded">J</span>
-            <span className="px-1.5 py-0.5 bg-base-900 border border-base-800 rounded">K</span>
-            <span className="text-base-400 ml-1">Navigate</span>
-         </div>
-         <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest">
-            <span className="px-1.5 py-0.5 bg-base-900 border border-base-800 rounded">A</span>
-            <span className="text-base-400 ml-1">Approve</span>
-         </div>
-         <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest">
-            <span className="px-1.5 py-0.5 bg-base-900 border border-base-800 rounded">R</span>
-            <span className="text-base-400 ml-1">Reject</span>
-         </div>
       </div>
     </div>
   );

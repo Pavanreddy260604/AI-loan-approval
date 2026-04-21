@@ -190,7 +190,8 @@ export const Button = React.memo(React.forwardRef<HTMLButtonElement, ButtonProps
       fontWeight: typography.fontWeights.medium,
       borderRadius: borderRadius.md,
       cursor: isDisabled ? 'not-allowed' : 'pointer',
-      opacity: isDisabled ? 0.6 : 1,
+      opacity: isDisabled ? 0.35 : 1,
+      filter: isDisabled ? 'grayscale(0.6)' : 'none',
       border: '1px solid transparent',
       outline: 'none',
       fontFamily: 'inherit',
@@ -211,7 +212,7 @@ export const Button = React.memo(React.forwardRef<HTMLButtonElement, ButtonProps
       },
       ghost: {
         backgroundColor: 'transparent',
-        color: colors.base[400],
+        color: colors.base[300], // WCAG AA: 4.6:1 contrast vs transparent bg
         borderColor: 'transparent',
       },
       danger: {

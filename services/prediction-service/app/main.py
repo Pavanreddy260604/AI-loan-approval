@@ -324,7 +324,6 @@ def load_bundle(artifact_key: str) -> dict[str, Any]:
     return joblib.load(handle)
 
 
-@lru_cache(maxsize=128)
 def resolve_version(tenant_id: str, dataset_id: str, model_version_id: str | None, access_token: str) -> dict:
     headers = {"Authorization": f"Bearer {access_token}"}
     correlation_id = correlation_id_ctx.get()
@@ -397,6 +396,14 @@ def to_json_safe_record(record: dict[str, Any]) -> dict[str, Any]:
 
 def predict_probability(bundle: dict[str, Any], features: dict[str, Any]) -> float:
     frame = pd.DataFrame([features])
+    
+    # Robust: Clean numeric features - convert empty strings and invalid values to NaN
+    numeric_features = bundle.get("numeric_features", [])
+    for col in numeric_features:
+        if col in frame.columns:
+            # Convert to numeric, coercing errors to NaN
+            frame[col] = pd.to_numeric(frame[col], errors="coerce")
+    
     transformed = bundle["preprocessor"].transform(frame)
     dense = transformed.toarray() if hasattr(transformed, "toarray") else np.asarray(transformed)
 
@@ -442,8 +449,10 @@ def apply_smart_mapping(bundle: dict[str, Any], df: pd.DataFrame) -> pd.DataFram
 
 def parse_batch(file_name: str, payload: bytes | Any, chunksize: int | None = None) -> pd.DataFrame | Any:
     ext = file_name.lower().split(".")[-1]
-    if ext not in ["csv", "xlsx"]:
-        raise ValueError(f"Unsupported file format: .{ext}. Please use .csv or .xlsx.")
+    # World Class: Support global data formats
+    supported = ["csv", "xlsx", "xls", "xlsm", "txt", "tsv"]
+    if ext not in supported:
+        raise ValueError(f"Unsupported file format: .{ext}. Supported: {', '.join(supported)}")
     
     if isinstance(payload, bytes):
         buffer = BytesIO(payload)
@@ -461,46 +470,73 @@ def parse_batch(file_name: str, payload: bytes | Any, chunksize: int | None = No
     def normalize_frame(frame: pd.DataFrame) -> pd.DataFrame:
         normalized = frame.copy()
         normalized.columns = [str(c).strip() for c in normalized.columns]
+        
+        # Common NA/empty representations to handle
+        na_values = ["", " ", "  ", "na", "n/a", "N/A", "NA", "null", "NULL", "None", "-", "--", "?"]
+        
         for col in normalized.select_dtypes(["object"]).columns:
-            normalized[col] = normalized[col].astype(str).str.strip().replace("", np.nan)
+            # Strip whitespace and convert common NA strings to actual NaN
+            normalized[col] = normalized[col].astype(str).str.strip()
+            # Replace various NA representations with np.nan
+            normalized[col] = normalized[col].replace(na_values, np.nan)
+            # Also handle whitespace-only strings via regex
+            normalized[col] = normalized[col].replace(r"^\s*$", np.nan, regex=True)
         return normalized
 
     import io
     
-    try:
-        if ext == "xlsx":
-            if chunksize:
-                print("[PREDICTION] Warning: chunksize not supported for Excel files.")
-            df = pd.read_excel(buffer, engine="openpyxl")
-            return normalize_frame(df)
-        
-        # Robust CSV parsing
-        reset_buffer()
-        # Wrap bytes in text stream for the python engine sniffer
-        stream = buffer
-        if isinstance(buffer, (BytesIO, io.BufferedIOBase)):
-            stream = io.TextIOWrapper(buffer, encoding="utf-8", errors="replace", newline="")
-            
-        df_iter = pd.read_csv(stream, sep=None, engine="python", on_bad_lines="warn", chunksize=chunksize)
-        
+    # Excel files (xlsx, xls, xlsm)
+    if ext in ["xlsx", "xls", "xlsm"]:
         if chunksize:
-            return (normalize_frame(chunk) for chunk in df_iter)
-        
-        return normalize_frame(df_iter)
-    except Exception as e:
-        print(f"[PREDICTION] Primary CSV parsing failed: {e}. Retrying with utf-8-sig...")
-        reset_buffer()
-        df = pd.read_csv(buffer, encoding="utf-8-sig", on_bad_lines="skip", chunksize=chunksize)
-        if chunksize:
-            return (normalize_frame(chunk) for chunk in df)
+            print("[PREDICTION] Warning: chunksize not supported for Excel files.")
+        engine = "xlrd" if ext == "xls" else "openpyxl"
+        df = pd.read_excel(buffer, engine=engine)
         return normalize_frame(df)
+    
+    # TSV uses tab separator, others auto-detect
+    sep = "\t" if ext == "tsv" else None
+    
+    # World Class: Try multiple encodings for international data support
+    encodings = ['utf-8', 'utf-8-sig', 'latin-1', 'windows-1252', 'cp1252', 'iso-8859-1']
+    last_error = None
+    
+    for encoding in encodings:
+        try:
+            reset_buffer()
+            stream = buffer
+            if isinstance(buffer, (BytesIO, io.BufferedIOBase)):
+                stream = io.TextIOWrapper(buffer, encoding=encoding, errors="replace", newline="")
+                
+            df_iter = pd.read_csv(stream, sep=sep, engine="python", on_bad_lines="warn", chunksize=chunksize)
+            
+            if chunksize:
+                return (normalize_frame(chunk) for chunk in df_iter)
+            
+            print(f"[PREDICTION] Successfully parsed with encoding: {encoding}")
+            return normalize_frame(df_iter)
+        except Exception as e:
+            last_error = e
+            continue
+    
+    print(f"[PREDICTION] All encoding attempts failed. Last error: {last_error}")
+    raise ValueError(f"Unable to parse file. Please ensure it is a valid CSV/TSV with proper encoding.")
 
 
 def normalize_chunk(chunk: pd.DataFrame) -> pd.DataFrame:
     normalized = chunk.copy()
     normalized.columns = [str(c).strip() for c in normalized.columns]
+    
+    # Common NA/empty representations to handle
+    na_values = ["", " ", "  ", "na", "n/a", "N/A", "NA", "null", "NULL", "None", "-", "--", "?"]
+    
     for col in normalized.select_dtypes(["object"]).columns:
-        normalized[col] = normalized[col].astype(str).str.strip().replace("", np.nan)
+        # Strip whitespace and convert common NA strings to actual NaN
+        normalized[col] = normalized[col].astype(str).str.strip()
+        # Replace various NA representations with np.nan
+        normalized[col] = normalized[col].replace(na_values, np.nan)
+        # Also handle whitespace-only strings
+        normalized[col] = normalized[col].replace(r"^\s*$", np.nan, regex=True)
+    
     return normalized
 
 

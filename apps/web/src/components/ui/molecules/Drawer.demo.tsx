@@ -402,58 +402,43 @@ export const DrawerDemo: React.FC = () => {
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
           {/* Notification Item */}
-          <div style={{ 
-            padding: '16px', 
-            backgroundColor: '#18181b', 
-            borderRadius: '8px',
-            borderLeft: '3px solid #635BFF'
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '8px' }}>
+          <div className="p-4 rounded-lg bg-primary/5 border border-primary/20">
+            <div className="flex justify-between items-start mb-2">
               <Badge tone="primary" size="xs">New</Badge>
-              <span style={{ color: '#a1a1aa', fontSize: '0.75rem' }}>5m ago</span>
+              <span className="text-xs text-base-400">5m ago</span>
             </div>
-            <p style={{ color: '#fafafa', margin: '0 0 4px 0', fontWeight: 500 }}>
+            <p className="text-base-50 font-medium mb-1">
               New loan application
             </p>
-            <p style={{ color: '#a1a1aa', fontSize: '0.875rem', margin: 0 }}>
+            <p className="text-sm text-base-400">
               Application #12346 from Michael Johnson
             </p>
           </div>
 
           {/* Notification Item */}
-          <div style={{ 
-            padding: '16px', 
-            backgroundColor: '#18181b', 
-            borderRadius: '8px',
-            borderLeft: '3px solid #10b981'
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '8px' }}>
+          <div className="p-4 rounded-lg bg-success/5 border border-success/20">
+            <div className="flex justify-between items-start mb-2">
               <Badge tone="success" size="xs">Approved</Badge>
-              <span style={{ color: '#a1a1aa', fontSize: '0.75rem' }}>1h ago</span>
+              <span className="text-xs text-base-400">1h ago</span>
             </div>
-            <p style={{ color: '#fafafa', margin: '0 0 4px 0', fontWeight: 500 }}>
+            <p className="text-base-50 font-medium mb-1">
               Application approved
             </p>
-            <p style={{ color: '#a1a1aa', fontSize: '0.875rem', margin: 0 }}>
+            <p className="text-sm text-base-400">
               Application #12340 has been approved
             </p>
           </div>
 
           {/* Notification Item */}
-          <div style={{ 
-            padding: '16px', 
-            backgroundColor: '#18181b', 
-            borderRadius: '8px',
-            borderLeft: '3px solid #f59e0b'
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '8px' }}>
+          <div className="p-4 rounded-lg bg-warning/5 border border-warning/20">
+            <div className="flex justify-between items-start mb-2">
               <Badge tone="warning" size="xs">Action Required</Badge>
-              <span style={{ color: '#a1a1aa', fontSize: '0.75rem' }}>3h ago</span>
+              <span className="text-xs text-base-400">3h ago</span>
             </div>
-            <p style={{ color: '#fafafa', margin: '0 0 4px 0', fontWeight: 500 }}>
+            <p className="text-base-50 font-medium mb-1">
               Document verification needed
             </p>
-            <p style={{ color: '#a1a1aa', fontSize: '0.875rem', margin: 0 }}>
+            <p className="text-sm text-base-400">
               Application #12338 needs additional documents
             </p>
           </div>

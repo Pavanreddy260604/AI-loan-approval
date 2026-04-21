@@ -226,6 +226,7 @@ def train_dataset(job_id: str, payload: dict) -> dict:
                 "modelId": payload["modelId"],
                 "championModelFamily": winning_family,
                 "email": payload.get("email"),
+                "userId": payload.get("userId"),
             },
             correlation_id=payload.get("correlationId")
         )

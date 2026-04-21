@@ -1,6 +1,6 @@
 import React, { useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { colors, spacing, typography, borderRadius, transitions, shadows } from '../../../lib/design-tokens';
+import { spacing, typography, borderRadius, transitions, shadows } from '../../../lib/design-tokens';
 import { Checkbox } from '../atoms/Checkbox';
 import { Button } from '../atoms/Button';
 import { Spinner } from '../atoms/Spinner';
@@ -133,14 +133,14 @@ export const Table = <T extends Record<string, any>>({
     return row[column.accessor as string];
   }, []);
 
-  // Elite v2 Aesthetics
+  // Elite v2 Aesthetics - Theme-aware via CSS variables
   const tableStyles: React.CSSProperties = {
     width: '100%',
     borderCollapse: 'separate',
     borderSpacing: 0,
-    backgroundColor: 'rgba(0, 2, 18, 0.4)',
+    backgroundColor: 'var(--table-bg, rgba(0, 2, 18, 0.4))',
     backdropFilter: 'blur(20px)',
-    border: `1px solid ${colors.base[800]}`,
+    border: '1px solid var(--table-border, rgb(var(--tw-base-800)))',
     borderRadius: borderRadius.lg,
     boxShadow: shadows.xl,
     position: 'relative' as const,
@@ -152,9 +152,9 @@ export const Table = <T extends Record<string, any>>({
     textAlign: 'left',
     fontSize: '9px',
     fontWeight: typography.fontWeights.black,
-    color: colors.base[500],
-    backgroundColor: 'rgba(15, 23, 42, 0.5)',
-    borderBottom: `2px solid ${colors.base[800]}`,
+    color: 'var(--table-header-text, rgb(var(--tw-base-500)))',
+    backgroundColor: 'var(--table-header-bg, rgba(15, 23, 42, 0.5))',
+    borderBottom: '2px solid var(--table-border, rgb(var(--tw-base-800)))',
     textTransform: 'uppercase',
     letterSpacing: '0.15em',
     whiteSpace: 'nowrap',
@@ -164,9 +164,10 @@ export const Table = <T extends Record<string, any>>({
   const bodyCellStyles: React.CSSProperties = {
     padding: `${spacing[4]} ${spacing[6]}`,
     fontSize: typography.fontSizes.sm,
-    color: colors.base[100],
-    borderBottom: `1px solid ${colors.base[800]}50`,
+    color: 'var(--table-body-text, rgb(var(--tw-base-100)))',
+    borderBottom: '1px solid var(--table-row-border, rgb(var(--tw-base-800) / 0.5))',
     transition: `all ${transitions.base}`,
+    verticalAlign: 'top',
   };
 
   if (!loading && data.length === 0) {
@@ -178,7 +179,7 @@ export const Table = <T extends Record<string, any>>({
   }
 
   return (
-    <div className={`relative overflow-hidden ${className}`}>
+    <div className={`relative ${className}`}>
       <AnimatePresence mode="wait">
         {loading ? (
           <motion.div 
@@ -255,7 +256,7 @@ export const Table = <T extends Record<string, any>>({
                         className={`
                           group transition-all duration-300
                           ${onRowClick ? 'cursor-pointer' : ''}
-                          ${isSelected ? 'bg-primary/5' : 'hover:bg-white/[0.02]'}
+                          ${isSelected ? 'bg-primary/5' : 'hover:bg-base-50/[0.02]'}
                         `}
                       >
                         {selectable && (
@@ -275,7 +276,7 @@ export const Table = <T extends Record<string, any>>({
                             }}
                             className={column.className}
                           >
-                            <div className="transition-transform duration-300 group-hover:translate-x-0.5">
+                            <div className="min-w-0">
                               {renderCell(row, column, rowIndex)}
                             </div>
                           </td>
@@ -289,8 +290,14 @@ export const Table = <T extends Record<string, any>>({
 
             {pagination && pagination.totalPages > 1 && (
               <div className="flex items-center justify-between pt-6 px-1">
-                <div className="text-[10px] font-bold text-base-500 uppercase tracking-widest">
-                  Page {pagination.currentPage} <span className="text-base-700 mx-2">/</span> {pagination.totalPages}
+                <div className="flex items-center gap-3 text-[10px] font-bold text-base-500 uppercase tracking-widest">
+                  <span>Page {pagination.currentPage} / {pagination.totalPages}</span>
+                  {pagination.totalItems !== undefined && (
+                    <>
+                      <span className="text-base-800">·</span>
+                      <span className="text-base-600">{pagination.totalItems} total</span>
+                    </>
+                  )}
                 </div>
                 <div className="flex gap-2">
                   <Button
@@ -301,6 +308,17 @@ export const Table = <T extends Record<string, any>>({
                   >
                     Previous
                   </Button>
+                  {/* Page number pills — up to 5 pages */}
+                  {pagination.totalPages <= 5 && Array.from({ length: pagination.totalPages }, (_, i) => i + 1).map((page) => (
+                    <Button
+                      key={page}
+                      variant={page === pagination.currentPage ? "primary" : "secondary"}
+                      size="xs"
+                      onClick={() => pagination.onPageChange(page)}
+                    >
+                      {page}
+                    </Button>
+                  ))}
                   <Button
                     variant="primary"
                     size="xs"

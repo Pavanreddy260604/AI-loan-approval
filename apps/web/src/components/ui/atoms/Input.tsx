@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { colors, spacing, typography, borderRadius, transitions, shadows } from '../../../lib/design-tokens';
+import { colors, spacing, typography, borderRadius, transitions } from '../../../lib/design-tokens';
 
 
 /**
@@ -50,18 +50,20 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
       transition: `all ${transitions.base}`,
     };
 
+    // HIGH-CONTRAST COCKPIT MODE: Visible borders, glowing focus states
     const baseInputStyles: React.CSSProperties = {
       width: '100%',
       fontFamily: 'inherit',
       fontSize: '13px',
       fontWeight: typography.fontWeights.medium,
-      backgroundColor: isFocused ? 'rgba(15, 23, 42, 0.6)' : 'rgba(15, 23, 42, 0.3)',
+      // High contrast: lighter background, visible border
+      backgroundColor: isFocused ? 'rgba(15, 23, 42, 0.9)' : 'rgba(15, 23, 42, 0.7)',
       backdropFilter: 'blur(12px)',
       color: colors.base[50],
-      border: '1px solid',
-      borderColor: isFocused 
-        ? (effectiveVariant === 'error' ? colors.danger[500] : colors.primary[500]) 
-        : (effectiveVariant === 'error' ? colors.danger[800] : colors.base[800]),
+      border: '1.5px solid',
+      borderColor: isFocused
+        ? (effectiveVariant === 'error' ? colors.danger[400] : colors.primary[400])
+        : (effectiveVariant === 'error' ? colors.danger[600] : colors.base[600]),
       borderRadius: borderRadius.lg,
       padding: `${spacing[3]} ${spacing[4]}`,
       paddingLeft: leftIcon ? spacing[8] : spacing[4],
@@ -70,9 +72,10 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
       transition: `all ${transitions.base} cubic-bezier(0.4, 0, 0.2, 1)`,
       cursor: disabled ? 'not-allowed' : 'text',
       opacity: disabled ? 0.5 : 1,
-      boxShadow: isFocused 
-        ? `0 0 20px -5px ${effectiveVariant === 'error' ? colors.danger[900] : colors.primary[900]}40` 
-        : shadows.sm,
+      // PROMINENT GLOW: 2x intensity on focus for cockpit visibility
+      boxShadow: isFocused
+        ? `0 0 0 3px ${effectiveVariant === 'error' ? 'rgba(239, 68, 68, 0.15)' : 'rgba(99, 91, 255, 0.15)'}, 0 0 24px -5px ${effectiveVariant === 'error' ? colors.danger[500] : colors.primary[500]}60`
+        : `0 0 0 1px rgba(255, 255, 255, 0.02)`,
     };
 
     return (

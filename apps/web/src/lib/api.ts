@@ -1,6 +1,9 @@
-export const GATEWAY_ORIGIN = (import.meta as any).env.VITE_GATEWAY_ORIGIN || "http://localhost:4000";
-export const SOCKET_ORIGIN = (import.meta as any).env.VITE_SOCKET_ORIGIN || GATEWAY_ORIGIN;
-export const API_BASE = (import.meta as any).env.VITE_API_BASE_URL || `${GATEWAY_ORIGIN}/api/v1`;
+const viteEnv = (import.meta as any).env;
+const browserOrigin = typeof window !== "undefined" ? window.location.origin : "http://127.0.0.1:5175";
+
+export const GATEWAY_ORIGIN = viteEnv.VITE_GATEWAY_ORIGIN || browserOrigin;
+export const SOCKET_ORIGIN = viteEnv.VITE_SOCKET_ORIGIN || GATEWAY_ORIGIN;
+export const API_BASE = viteEnv.VITE_API_BASE_URL || new URL("/api/v1", GATEWAY_ORIGIN).toString();
 
 export interface AuthSession {
   token: string;
@@ -76,34 +79,84 @@ export interface DashboardResponse {
   recentDecisions: RecentDecision[];
 }
 
+// Safe storage wrapper that handles restricted contexts (iframes, private mode, extensions)
+const safeStorage = {
+  isAvailable: (() => {
+    try {
+      const testKey = "__storage_test__";
+      localStorage.setItem(testKey, testKey);
+      localStorage.removeItem(testKey);
+      return true;
+    } catch {
+      return false;
+    }
+  })(),
+
+  get(key: string): string | null {
+    try {
+      if (typeof window === 'undefined' || !window.localStorage) return null;
+      return localStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  },
+
+  set(key: string, value: string): boolean {
+    try {
+      if (typeof window === 'undefined' || !window.localStorage) return false;
+      localStorage.setItem(key, value);
+      return true;
+    } catch {
+      console.warn("Storage access denied - session will not persist across page reloads");
+      return false;
+    }
+  },
+
+  remove(key: string): boolean {
+    try {
+      if (typeof window === 'undefined' || !window.localStorage) return false;
+      localStorage.removeItem(key);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+};
+
+// In-memory fallback for restricted contexts
+let memorySession: AuthSession | null = null;
+
 export function getSession(): AuthSession | null {
   try {
-    const raw = localStorage.getItem("ai-loan-session");
-    if (!raw) return null;
-    const session = JSON.parse(raw);
-    if (session && !session.token && session.accessToken) {
-      session.token = session.accessToken;
+    // Try localStorage first
+    const raw = safeStorage.get("ai-loan-session");
+    if (raw) {
+      const session = JSON.parse(raw);
+      if (session && !session.token && session.accessToken) {
+        session.token = session.accessToken;
+      }
+      return session;
     }
-    return session;
+    // Fall back to memory if storage unavailable
+    return memorySession;
   } catch {
-    return null;
+    return memorySession;
   }
 }
 
 export function persistSession(session: AuthSession): void {
-  try {
-    localStorage.setItem("ai-loan-session", JSON.stringify(session));
-  } catch (err) {
-    console.error("Storage access denied:", err);
+  // Always store in memory as fallback
+  memorySession = session;
+  // Try to persist to storage
+  const success = safeStorage.set("ai-loan-session", JSON.stringify(session));
+  if (!success) {
+    console.warn("Session stored in memory only - will not persist across page reloads");
   }
 }
 
 export function clearSession(): void {
-  try {
-    localStorage.removeItem("ai-loan-session");
-  } catch (err) {
-    console.error("Storage access denied:", err);
-  }
+  memorySession = null;
+  safeStorage.remove("ai-loan-session");
 }
 
 export function toGatewayUrl(path: string | null | undefined): string | null {

@@ -15,49 +15,49 @@
  * All colors include a 50-900 scale for tonal variations.
  */
 export const colors = {
-  // Primary brand color (Stripe Indigo)
+  // Primary brand color (Deep Navy - distinctive, human-crafted)
   primary: {
-    50: '#f5f3ff',
-    100: '#ede9fe',
-    200: '#ddd6fe',
-    300: '#c4b5fd',
-    400: '#a78bfa',
-    500: '#8b5cf6',
-    600: '#635BFF', // Brand primary
-    700: '#6d28d9',
-    800: '#5b21b6',
-    900: '#4c1d95',
-    DEFAULT: '#635BFF'
+    50: '#f0f4f8',
+    100: '#d9e2ec',
+    200: '#bcccdc',
+    300: '#9fb3c8',
+    400: '#829ab1',
+    500: '#627d98',
+    600: '#486581', // Brand primary
+    700: '#334e68',
+    800: '#243b53',
+    900: '#102a43',
+    DEFAULT: '#486581'
   },
   
-  // Neutral scale (Zinc)
+  // Neutral scale (Cool Slate - distinctive, not zinc)
   base: {
-    50: '#fafafa',
-    100: '#f4f4f5',
-    200: '#e4e4e7',
-    300: '#d4d4d8',
-    400: '#a1a1aa',
-    500: '#71717a',
-    600: '#52525b',
-    700: '#3f3f46',
-    800: '#27272a',
-    900: '#18181b',
-    950: '#09090b'
+    50: '#f8fafc',
+    100: '#f1f5f9',
+    200: '#e2e8f0',
+    300: '#cbd5e1',
+    400: '#94a3b8',
+    500: '#64748b',
+    600: '#475569',
+    700: '#334155',
+    800: '#1e293b',
+    900: '#0f172a',
+    950: '#020617'
   },
   
-  // Semantic colors
+  // Semantic colors (muted, sophisticated tones)
   success: {
-    50: '#f0fdf4',
-    100: '#dcfce7',
-    200: '#bbf7d0',
-    300: '#86efac',
-    400: '#4ade80',
-    500: '#10b981',
-    600: '#059669',
-    700: '#047857',
-    800: '#065f46',
-    900: '#064e3b',
-    DEFAULT: '#10b981'
+    50: '#f4f7f4',
+    100: '#e3ebe3',
+    200: '#c7d8c7',
+    300: '#a6c2a6',
+    400: '#7da57d',
+    500: '#5a855a',
+    600: '#4a6b4a',
+    700: '#3d553d',
+    800: '#304530',
+    900: '#263826',
+    DEFAULT: '#5a855a'
   },
   warning: {
     50: '#fffbeb',

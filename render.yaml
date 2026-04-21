@@ -1,0 +1,90 @@
+services:
+  # 1. Frontend (Static Site - FREE)
+  - type: static
+    name: ailoan-web
+    runtime: static
+    buildCommand: cd apps/web && npm install && npm run build
+    staticPublishPath: apps/web/dist
+    envVars:
+      - key: VITE_GATEWAY_ORIGIN
+        fromService:
+          type: web
+          name: ailoan-core
+          property: hostport
+
+  # 2. Core API (Merged: gateway + auth + data + analytics + notification)
+  # This combines 5 microservices into 1 to fit free tier
+  - type: web
+    name: ailoan-core
+    runtime: docker
+    dockerfilePath: ./infra/docker/consolidated-core.Dockerfile
+    dockerContext: .
+    env: docker
+    plan: starter  # $7/mo - or use free with limits
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 4000
+      - key: CORS_ORIGIN
+        fromService:
+          type: static
+          name: ailoan-web
+          property: url
+      - key: AUTH_DATABASE_URL
+        fromDatabase:
+          name: ailoan-postgres
+          property: connectionString
+      - key: DATA_DATABASE_URL
+        fromDatabase:
+          name: ailoan-postgres
+          property: connectionString
+      - key: ANALYTICS_DATABASE_URL
+        fromDatabase:
+          name: ailoan-postgres
+          property: connectionString
+      - key: RABBITMQ_URL
+        fromService:
+          type: redis
+          name: ailoan-redis
+          property: connectionString
+    healthCheckPath: /health
+
+  # 3. AI Engine (Merged: training + prediction + fraud + xai)
+  # Python microservices combined into 1
+  - type: web
+    name: ailoan-ai
+    runtime: docker
+    dockerfilePath: ./infra/docker/consolidated-ai.Dockerfile
+    dockerContext: .
+    env: docker
+    plan: starter  # $7/mo - AI needs more RAM
+    envVars:
+      - key: TRAINING_DATABASE_URL
+        fromDatabase:
+          name: ailoan-postgres
+          property: connectionString
+      - key: PREDICTION_DATABASE_URL
+        fromDatabase:
+          name: ailoan-postgres
+          property: connectionString
+      - key: RABBITMQ_URL
+        fromService:
+          type: redis
+          name: ailoan-redis
+          property: connectionString
+    healthCheckPath: /health
+
+databases:
+  # PostgreSQL (FREE tier - 1GB)
+  - name: ailoan-postgres
+    type: postgres
+    plan: free
+    ipAllowList: []
+
+  # Redis (FREE tier - 25MB)
+  - name: ailoan-redis
+    type: redis
+    plan: free
+    ipAllowList: []
+    maxmemoryPolicy: allkeys-lru

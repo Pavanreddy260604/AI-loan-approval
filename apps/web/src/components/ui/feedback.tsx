@@ -7,6 +7,7 @@ import {
   RotateCcw, 
   AlertTriangle
 } from "lucide-react";
+import { Portal } from "./atoms/Portal";
 
 interface NoticeProps {
   message: string;
@@ -49,14 +50,16 @@ export function InlineError({ message }: { message: string }) {
 
 /* ─── Undo Toast System (Elite v10) ─── */
 
-export function UndoToast({ 
-  message, 
-  onUndo, 
-  duration = 10000 
-}: { 
-  message: string, 
-  onUndo: () => void, 
-  duration?: number 
+export function UndoToast({
+  message,
+  onUndo,
+  duration = 10000,
+  stackIndex = 0,
+}: {
+  message: string,
+  onUndo: () => void,
+  duration?: number,
+  stackIndex?: number,
 }) {
   const [timeLeft, setTimeLeft] = useState(duration);
 
@@ -71,12 +74,16 @@ export function UndoToast({
     return () => clearInterval(interval);
   }, [duration]);
 
+  // Stack toasts vertically: each stacked toast rises 72px above the previous
+  const bottomOffset = 32 + stackIndex * 72;
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 50, scale: 0.95 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
       exit={{ opacity: 0, scale: 0.95 }}
-      className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[1000] w-full max-w-sm"
+      style={{ bottom: bottomOffset }}
+      className="fixed left-1/2 -translate-x-1/2 z-[1000] w-full max-w-sm"
     >
       <div className="bg-base-950 border border-base-800 shadow-elite-elevated rounded-pro-lg p-4 flex items-center justify-between gap-4">
         <div className="flex items-center gap-3">
@@ -129,10 +136,16 @@ export function FrictionModal({
   onCancel: () => void,
   isOpen: boolean
 }) {
+  if (!isOpen) return null;
+
   return (
-    <AnimatePresence>
-      {isOpen && (
-        <div className="fixed inset-0 z-[2000] flex items-center justify-center p-6">
+    <Portal>
+      <AnimatePresence>
+        <motion.div
+           key="friction-overlay"
+           initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+           className="fixed inset-0 z-[2000] flex items-center justify-center p-6"
+        >
            <motion.div 
               initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               onClick={onCancel}
@@ -159,8 +172,8 @@ export function FrictionModal({
                  </button>
               </div>
            </motion.div>
-        </div>
-      )}
-    </AnimatePresence>
+        </motion.div>
+      </AnimatePresence>
+    </Portal>
   );
 }

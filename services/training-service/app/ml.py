@@ -55,10 +55,12 @@ def parse_dataset(file_name: str, payload: bytes | Any, chunksize: int | None = 
         normalized.loc[non_null] = normalized.loc[non_null].map(lambda value: str(value).strip())
         return normalized.replace("", np.nan)
 
-    if file_name.lower().endswith((".xlsx", ".xls")):
+    # Excel files (xlsx, xls, xlsm)
+    if file_name.lower().endswith((".xlsx", ".xls", ".xlsm")):
         if chunksize:
             print("[ML] Warning: chunksize not supported for Excel files. Loading fully.")
-        df = pd.read_excel(buffer)
+        engine = "xlrd" if file_name.lower().endswith(".xls") else "openpyxl"
+        df = pd.read_excel(buffer, engine=engine)
         df.columns = [str(c).strip() for c in df.columns]
         for col in df.select_dtypes(["object"]).columns:
             df[col] = normalize_strings(df[col])
@@ -78,41 +80,29 @@ def parse_dataset(file_name: str, payload: bytes | Any, chunksize: int | None = 
             data_keywords = {"graduate", "not graduate", "urban", "rural", "semiurban", "yes", "no", "male", "female", "y", "n"}
             keyword_count = sum(1 for h in sample_headers if h in data_keywords)
             data_like_ratio = (numeric_count + keyword_count) / total_cols
-            
-            # Only flag as bogus if more than half the headers look like data values
-            if data_like_ratio > 0.5:
-                print(f"[ML-HEURISTIC] Detected bogus header (ratio={data_like_ratio:.2f}): {sample_headers}")
+
+            # Short integer headers (e.g. "1","2","3") and pandas "Unnamed: N"
+            # placeholders are never legitimate loan-data column names. Treat
+            # their presence as a strong bogus-header signal even when the
+            # ratio heuristic alone would miss it (e.g. one numeric index
+            # column alongside a handful of alphabetic ones).
+            short_int_headers = [h for h in sample_headers if h.isdigit() and len(h) <= 3]
+            unnamed_headers = [h for h in sample_headers if h.startswith("unnamed:") or h == ""]
+
+            # Very conservative: require 70%+ data-like OR multiple short ints OR unnamed columns
+            if data_like_ratio > 0.7 or len(short_int_headers) >= 2 or len(unnamed_headers) >= 1:
+                print(f"[ML-HEURISTIC] Detected bogus header (ratio={data_like_ratio:.2f}, "
+                      f"short_ints={len(short_int_headers)}, unnamed={len(unnamed_headers)}): {sample_headers}")
                 bogus_header = True
             
         if bogus_header:
-            # Shift the current 'header' back as the first data row
-            data_row = pd.DataFrame([normalized.columns], columns=normalized.columns)
-            normalized = pd.concat([data_row, normalized], ignore_index=True)
-            
-            # Map known loan dataset layouts by column count
-            known_headers = {
-                10: [
-                    "Dependents", "Education", "Self_Employed", "ApplicantIncome",
-                    "AssetValue", "Loan_Term", "CIBIL_Score", "CoapplicantIncome",
-                    "BankAssetValue", "Approved"
-                ],
-                13: [
-                    "Loan_ID", "Dependents", "Education", "Self_Employed",
-                    "ApplicantIncome", "LoanAmount", "Loan_Term", "CIBIL_Score",
-                    "ResidentialAssets", "CommercialAssets", "LuxuryAssets",
-                    "BankAssetValue", "Loan_Status"
-                ],
-            }
-            
+            # Headers look like data, but they're probably still valid column names.
+            # Just use original column names without shifting them to data.
             col_count = len(normalized.columns)
-            if col_count in known_headers:
-                normalized.columns = known_headers[col_count]
-                print(f"[ML-HEURISTIC] Mapped {col_count} columns to known loan dataset headers")
-            else:
-                normalized.columns = [f"Feature_{i+1}" for i in range(col_count)]
-                print(f"[ML-HEURISTIC] Using generic Feature_N headers (count {col_count})")
+            normalized.columns = [str(c).strip() for c in normalized.columns]
+            print(f"[ML-HEURISTIC] Using original CSV headers (count {col_count})")
 
-        normalized.columns = [str(c).strip() for c in normalized.columns]
+        # Final cleanup of column names and string data
         for col in normalized.select_dtypes(["object"]).columns:
             normalized[col] = normalize_strings(normalized[col])
         return normalized
@@ -124,41 +114,45 @@ def parse_dataset(file_name: str, payload: bytes | Any, chunksize: int | None = 
     
     import io
     
-    def get_text_stream(buf: Any) -> io.TextIOWrapper | Any:
-        reset_buffer()
-        if isinstance(buf, (BytesIO, io.BufferedIOBase)):
-            return io.TextIOWrapper(buf, encoding='utf-8', errors='replace', newline='')
-        return buf
-
-    try:
-        # We use a robust sniffer with the python engine for column detection
-        # The python engine sniffer requires a text stream, not bytes
-        text_stream = get_text_stream(buffer)
-        
-        df_iter = pd.read_csv(
-            text_stream, 
-            sep=None, 
-            engine='python', 
-            on_bad_lines='warn',
-            encoding_errors='replace',
-            chunksize=chunksize
-        )
-        
-        if chunksize:
-            return normalize_reader(df_iter)
-        
-        df = df_iter
-    except Exception as e:
-        print(f"[ML] Primary CSV parsing failed: {e}. Retrying with utf-8-sig...")
-        reset_buffer()
-        df = pd.read_csv(
-            buffer,
-            encoding='utf-8-sig',
-            on_bad_lines='skip',
-            chunksize=chunksize
-        )
-        if chunksize:
-            return normalize_reader(df)
+    # Handle S3 streaming body - read into buffer first
+    if not isinstance(buffer, (BytesIO, bytes)):
+        # It's a streaming response body, read it into BytesIO
+        buffer = BytesIO(buffer.read())
+    elif isinstance(buffer, bytes):
+        buffer = BytesIO(buffer)
+    
+    # Try multiple encodings for international data support
+    encodings = ['utf-8', 'utf-8-sig', 'latin-1', 'windows-1252', 'cp1252', 'iso-8859-1']
+    df = None
+    last_error = None
+    
+    for encoding in encodings:
+        try:
+            reset_buffer()
+            text_buf = io.TextIOWrapper(buffer, encoding=encoding, errors='replace', newline='')
+            
+            df_iter = pd.read_csv(
+                text_buf, 
+                sep=None, 
+                engine='python', 
+                on_bad_lines='warn',
+                encoding_errors='replace',
+                chunksize=chunksize
+            )
+            
+            if chunksize:
+                return normalize_reader(df_iter)
+            
+            df = df_iter
+            print(f"[ML] Successfully parsed CSV with encoding: {encoding}")
+            break
+        except Exception as e:
+            last_error = e
+            continue
+    
+    if df is None:
+        print(f"[ML] All encoding attempts failed. Last error: {last_error}")
+        raise ValueError(f"Unable to parse CSV file. Please ensure it is a valid CSV with proper encoding.")
 
     # World Class: Normalize column names and string content
     # Handle leading/trailing whitespace which causes mapping failures
@@ -279,9 +273,18 @@ def prepare_dataset(df: pd.DataFrame, mapping: dict[str, Any]) -> tuple[pd.DataF
         else:
             categorical_features.append(column)
 
-    # Explicitly coerce numeric features to numeric types to handle mixed strings/NaNs correctly
+    # World Class: Handle international number formats (European: 1.234,56 vs US: 1,234.56)
     for column in numeric_features:
+        # First try standard parsing
         x[column] = pd.to_numeric(x[column], errors="coerce")
+        
+        # If mostly NaN, try European format (swap comma/dot)
+        if x[column].isna().sum() > len(x[column]) * 0.5:
+            european_parsed = x[column].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
+            european_numeric = pd.to_numeric(european_parsed, errors="coerce")
+            # Only use if it produces valid numbers
+            if european_numeric.notna().sum() > x[column].notna().sum():
+                x[column] = european_numeric
 
     return x, y, numeric_features, categorical_features
 

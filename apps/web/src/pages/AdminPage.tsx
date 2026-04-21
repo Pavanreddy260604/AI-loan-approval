@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { 
-  ShieldAlert, 
-  Users, 
+import {
+  ShieldAlert,
+  Users,
   Server,
   Search,
   Database,
@@ -10,7 +10,6 @@ import {
   Terminal,
   ShieldCheck,
   History,
-  Filter,
   PlusCircle
 } from "lucide-react";
 import { 
@@ -66,6 +65,7 @@ interface AuditLog {
  */
 export function AdminPage({ auth }: { auth: AuthContextValue }) {
   const [currentPage, setCurrentPage] = useState(1);
+  const [auditSearch, setAuditSearch] = useState("");
   const pageSize = 10;
   const telemetry = useQuery<TelemetryData>({
     queryKey: ["telemetry", auth.session?.token],
@@ -190,18 +190,25 @@ export function AdminPage({ auth }: { auth: AuthContextValue }) {
       header: 'Confidence',
       accessor: 'probability',
       className: 'text-right',
-      render: (row) => (
-        <div className="flex items-center justify-end gap-4 min-w-[120px]">
-           <span className="font-black text-base-50 text-sm italic tabular-nums">{(row.probability * 100).toFixed(1)}%</span>
-           <div className="w-16 h-1.5 bg-base-900 border border-base-800 rounded-full overflow-hidden self-center p-px">
-              <motion.div 
+      render: (row) => {
+        const pct = typeof row.probability === 'number' && isFinite(row.probability)
+          ? Math.min(100, Math.max(0, row.probability * 100))
+          : null;
+        return (
+          <div className="flex items-center justify-end gap-4 min-w-[120px]">
+            <span className="font-black text-base-50 text-sm italic tabular-nums">
+              {pct !== null ? `${pct.toFixed(1)}%` : '—'}
+            </span>
+            <div className="w-16 h-1.5 bg-base-900 border border-base-800 rounded-full overflow-hidden self-center p-px">
+              <motion.div
                 initial={{ width: 0 }}
-                animate={{ width: `${row.probability * 100}%` }}
-                className={`h-full rounded-full ${row.decision ? 'bg-success shadow-[0_0_8px_rgba(34,197,94,0.4)]' : 'bg-danger shadow-[0_0_8px_rgba(239,68,68,0.4)]'}`} 
+                animate={{ width: `${pct ?? 0}%` }}
+                className={`h-full rounded-full ${row.decision ? 'bg-success shadow-[0_0_8px_rgba(34,197,94,0.4)]' : 'bg-danger shadow-[0_0_8px_rgba(239,68,68,0.4)]'}`}
               />
-           </div>
-        </div>
-      ),
+            </div>
+          </div>
+        );
+      },
     },
   ];
 
@@ -237,10 +244,18 @@ export function AdminPage({ auth }: { auth: AuthContextValue }) {
            hint="Authorized Officer Accounts" 
          />
          <ShinyMetricCard
-           title="Service Health"
-           value={`${(systemUsage.cpu * 100).toFixed(0)}%`}
+           title="CPU Usage"
+           value={
+             typeof systemUsage.cpu === 'number'
+               ? `${(systemUsage.cpu <= 1 ? systemUsage.cpu * 100 : systemUsage.cpu).toFixed(0)}%`
+               : '—'
+           }
            icon={Cpu}
-           hint={`Gateway Memory: ${(systemUsage.memory * 1024).toFixed(0)} MB`}
+           hint={
+             typeof systemUsage.memory === 'number'
+               ? `Memory: ${systemUsage.memory <= 1 ? (systemUsage.memory * 100).toFixed(0) + '%' : systemUsage.memory.toFixed(0) + ' MB'}`
+               : 'Memory: —'
+           }
          />
          <Card border padded className="flex flex-col justify-center bg-primary/5 border-primary/20 shadow-elite-primary/5 group relative overflow-hidden">
             <div className="absolute top-0 right-0 -mt-12 -mr-12 w-32 h-32 bg-primary/10 rounded-full blur-2xl group-hover:scale-150 transition-transform duration-1000" />
@@ -253,32 +268,34 @@ export function AdminPage({ auth }: { auth: AuthContextValue }) {
          </Card>
       </div>
 
-      <div className="grid gap-10 lg:grid-cols-[1fr_380px]">
+      <div className="grid gap-6 lg:gap-10 lg:grid-cols-[1fr_380px]">
         {/* Service Registry */}
-        <div className="space-y-6">
-           <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                 <div className="h-10 w-10 bg-base-900 border border-base-800 rounded-xl flex items-center justify-center text-primary shadow-inner">
+        <div className="space-y-6 min-w-0">
+           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div className="flex items-center gap-3 min-w-0">
+                 <div className="h-10 w-10 bg-base-900 border border-base-800 rounded-xl flex items-center justify-center text-primary shadow-inner shrink-0">
                     <Terminal size={20} />
                  </div>
-                 <div>
-                    <h3 className="text-xs font-black text-base-50 uppercase tracking-[0.2em] leading-none">Infrastructure Matrix</h3>
-                    <p className="text-[10px] text-base-600 font-bold uppercase mt-1 tracking-widest italic leading-none">Global service health</p>
+                 <div className="min-w-0">
+                    <h3 className="text-xs font-black text-base-50 uppercase tracking-[0.2em] leading-none truncate">Infrastructure Matrix</h3>
+                    <p className="text-[10px] text-base-600 font-bold uppercase mt-1 tracking-widest italic leading-none truncate">Global service health</p>
                  </div>
               </div>
-              <div className="flex items-center gap-4">
+              <div className="flex items-center gap-3 sm:gap-4 flex-wrap">
                  <span className="text-[10px] font-black text-base-700 uppercase tracking-widest">Uptime: 99.999%</span>
-                 <div className="h-4 w-px bg-base-800" />
+                 <div className="h-4 w-px bg-base-800 hidden sm:block" />
                  <Badge tone="info" className="text-[9px] px-3">Live</Badge>
               </div>
            </div>
 
-           <Table
-             data={services}
-             columns={serviceColumns}
-             className="shadow-3xl border-base-800/50"
-             onRowClick={() => {}}
-           />
+           <div className="-mx-4 sm:mx-0 overflow-x-auto">
+             <Table
+               data={services}
+               columns={serviceColumns}
+               className="shadow-3xl border-base-800/50 min-w-[640px] sm:min-w-0"
+               onRowClick={() => {}}
+             />
+           </div>
            {services.length === 0 && !telemetry.isLoading && (
              <div className="py-12 text-center border border-base-800 rounded-lg bg-base-900/20">
                <Server size={20} className="mx-auto text-base-700 mb-3" />
@@ -311,17 +328,17 @@ export function AdminPage({ auth }: { auth: AuthContextValue }) {
                       </div>
                     )}
                     {users.map((user) => (
-                       <div key={user.id} className="p-6 flex items-center justify-between hover:bg-base-800/50 transition-all group cursor-pointer relative overflow-hidden">
-                          <div className="flex items-center gap-4 min-w-0 relative z-10">
-                             <div className="h-11 w-11 rounded-2xl bg-base-950 border border-base-800 flex items-center justify-center font-black text-xs text-primary group-hover:bg-primary group-hover:text-white group-hover:border-primary transition-all duration-300 shadow-inner">
+                       <div key={user.id} className="p-4 sm:p-6 flex items-center justify-between gap-3 hover:bg-base-800/50 transition-all group cursor-pointer relative overflow-hidden">
+                          <div className="flex items-center gap-3 sm:gap-4 min-w-0 relative z-10 flex-1">
+                             <div className="h-10 w-10 sm:h-11 sm:w-11 rounded-2xl bg-base-950 border border-base-800 flex items-center justify-center font-black text-xs text-primary group-hover:bg-primary group-hover:text-white group-hover:border-primary transition-all duration-300 shadow-inner shrink-0">
                                 {user.fullName.split(' ').map(n => n[0]).join('')}
                              </div>
-                             <div className="min-w-0">
-                                <p className="text-[14px] font-black text-base-100 tracking-tight uppercase leading-none italic group-hover:text-base-50 transition-colors">{user.fullName}</p>
-                                <p className="text-[10px] font-bold text-base-600 truncate mt-1.5 uppercase tracking-widest">{user.email}</p>
+                             <div className="min-w-0 flex-1">
+                                <p className="text-[13px] sm:text-[14px] font-black text-base-100 tracking-tight uppercase leading-tight italic group-hover:text-base-50 transition-colors truncate">{user.fullName}</p>
+                                <p className="text-[10px] font-bold text-base-600 truncate mt-1 uppercase tracking-widest">{user.email}</p>
                              </div>
                           </div>
-                          <Badge tone={user.role === 'ADMIN' ? 'warning' : 'ghost'} className="text-[9px] font-black tracking-widest relative z-10">{user.role}</Badge>
+                          <Badge tone={user.role === 'ADMIN' ? 'warning' : 'ghost'} className="text-[9px] font-black tracking-widest relative z-10 shrink-0">{user.role}</Badge>
                        </div>
                     ))}
                  </div>
@@ -369,35 +386,52 @@ export function AdminPage({ auth }: { auth: AuthContextValue }) {
                </div>
             </div>
             <div className="flex flex-wrap items-center gap-4 w-full sm:w-auto">
-               <div className="flex-1 min-w-[300px] relative group">
+               <div className="flex-1 w-full sm:min-w-[300px] relative group">
                    <div className="absolute inset-y-0 left-4 flex items-center text-base-700 group-focus-within:text-primary transition-colors">
                       <Search size={16} />
                    </div>
-                   <input 
-                     type="text" 
-                     placeholder="QUERY IDENTITY OR AUDIT REF..." 
+                   <input
+                     type="text"
+                     placeholder="QUERY IDENTITY OR AUDIT REF..."
+                     value={auditSearch}
+                     onChange={(e) => { setAuditSearch(e.target.value); setCurrentPage(1); }}
+                     aria-label="Search audit logs"
                      className="w-full h-12 bg-base-950 border border-base-800 rounded-2xl pl-12 pr-4 text-[10px] font-black text-base-50 uppercase tracking-[0.2em] outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20 transition-all placeholder:text-base-800 shadow-inner"
                    />
                </div>
-               <Button variant="secondary" size="md" className="h-12 w-12 p-0 border border-base-800" aria-label="Filter audit logs">
-                  <Filter size={18} />
-               </Button>
             </div>
          </div>
 
-         <Table 
-           data={audits.data?.slice((currentPage - 1) * pageSize, currentPage * pageSize) || []} 
-           columns={auditColumns}
-           loading={audits.isLoading}
-           className="shadow-elite-primary/5 border-base-800/50"
-           onRowClick={() => {}}
-           pagination={{
-             currentPage,
-             totalPages: Math.ceil((audits.data?.length || 0) / pageSize),
-             pageSize,
-             onPageChange: (page) => setCurrentPage(page)
-           }}
-         />
+         <div className="-mx-4 sm:mx-0 overflow-x-auto">
+           {(() => {
+             const query = auditSearch.trim().toLowerCase();
+             const allAudits = audits.data || [];
+             const filteredAudits = query
+               ? allAudits.filter((a) => {
+                   const idMatch = String(a.id).toLowerCase().includes(query);
+                   const emailMatch = (a.features?.email || "").toLowerCase().includes(query);
+                   const familyMatch = (a.modelFamily || "").toLowerCase().includes(query);
+                   return idMatch || emailMatch || familyMatch;
+                 })
+               : allAudits;
+             return (
+               <Table
+                 data={filteredAudits.slice((currentPage - 1) * pageSize, currentPage * pageSize)}
+                 columns={auditColumns}
+                 loading={audits.isLoading}
+                 className="shadow-elite-primary/5 border-base-800/50 min-w-[720px] sm:min-w-0"
+                 onRowClick={() => {}}
+                 pagination={{
+                   currentPage,
+                   totalPages: Math.max(1, Math.ceil(filteredAudits.length / pageSize)),
+                   pageSize,
+                   totalItems: filteredAudits.length,
+                   onPageChange: (page) => setCurrentPage(page)
+                 }}
+               />
+             );
+           })()}
+         </div>
       </div>
     </div>
   );

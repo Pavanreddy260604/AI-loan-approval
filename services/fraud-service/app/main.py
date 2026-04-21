@@ -158,10 +158,37 @@ def extract_rule_flags(features: dict) -> list[str]:
     return flags
 
 
+# In-memory model cache for hot paths
+_model_cache: dict[str, dict] = {}
+
+def preload_hot_models():
+    """Preload recent models from database to warm the cache"""
+    try:
+        with get_conn() as conn, conn.cursor() as cur:
+            cur.execute("""
+                SELECT DISTINCT model_version_id, tenant_id 
+                FROM fraud_alerts 
+                ORDER BY created_at DESC 
+                LIMIT 10
+            """)
+            rows = cur.fetchall()
+            for row in rows:
+                key = f"{row['tenant_id']}/{row['model_version_id']}/fraud.joblib"
+                try:
+                    _ = load_artifact(key)  # Warm the LRU cache
+                    print(f"[FRAUD] Preloaded model: {key}")
+                except Exception as e:
+                    print(f"[FRAUD] Failed to preload {key}: {e}")
+    except Exception as e:
+        print(f"[FRAUD] Preload error: {e}")
+
 @app.on_event("startup")
 def startup() -> None:
     init_db()
     ensure_bucket(MODELS_BUCKET)
+    # Preload models in background
+    import threading
+    threading.Thread(target=preload_hot_models, daemon=True).start()
 
 
 @app.get("/health")
@@ -214,18 +241,24 @@ def evaluate(payload: dict, authorization: str | None = Header(None)) -> dict:
     if payload.get("userId") is not None and payload.get("userId") != claims.get("sub"):
         raise HTTPException(status_code=403, detail="Forbidden")
 
-    if not payload.get("fraudArtifactKey"):
-        return {"riskBand": "low", "anomalyScore": 0.0, "ruleFlags": []}
+    features = payload.get("features") or {}
+    flags = extract_rule_flags(features)
 
-    artifact = load_artifact(payload["fraudArtifactKey"])
-    row = pd.DataFrame([payload["features"]])
-    numeric_frame = row.reindex(columns=artifact["numeric_features"], fill_value=0).apply(pd.to_numeric, errors="coerce")
-    imputed = artifact["imputer"].transform(numeric_frame)
-    scaled = artifact["scaler"].transform(imputed)
-    decision_score = float(artifact["model"].decision_function(scaled)[0])
-    anomaly_score = max(0.0, min(1.0, (-decision_score + 0.5)))
-    flags = extract_rule_flags(payload["features"])
-    risk_score = min(1.0, anomaly_score + len(flags) * 0.15)
+    # Fallback: if no IsolationForest artifact exists for this model version,
+    # score using rule-based signals only so the UI always gets a real number
+    # instead of a flat 0%.
+    if not payload.get("fraudArtifactKey"):
+        anomaly_score = 0.0
+        risk_score = min(1.0, len(flags) * 0.25)
+    else:
+        artifact = load_artifact(payload["fraudArtifactKey"])
+        row = pd.DataFrame([features])
+        numeric_frame = row.reindex(columns=artifact["numeric_features"], fill_value=0).apply(pd.to_numeric, errors="coerce")
+        imputed = artifact["imputer"].transform(numeric_frame)
+        scaled = artifact["scaler"].transform(imputed)
+        decision_score = float(artifact["model"].decision_function(scaled)[0])
+        anomaly_score = max(0.0, min(1.0, (-decision_score + 0.5)))
+        risk_score = min(1.0, anomaly_score + len(flags) * 0.15)
 
     if risk_score >= 0.75:
         risk_band = "high"
@@ -234,23 +267,31 @@ def evaluate(payload: dict, authorization: str | None = Header(None)) -> dict:
     else:
         risk_band = "low"
 
-    with get_conn() as conn, conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO fraud_alerts (id, tenant_id, user_id, model_version_id, risk_band, anomaly_score, rule_flags, payload)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            """,
-            (
-                str(uuid4()),
-                payload["tenantId"],
-                payload.get("userId"),
-                payload.get("modelVersionId"),
-                risk_band,
-                anomaly_score,
-                Json(flags),
-                Json(payload["features"]),
-            ),
-        )
+    # Async database write - don't block response
+    def save_fraud_alert():
+        try:
+            with get_conn() as conn, conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO fraud_alerts (id, tenant_id, user_id, model_version_id, risk_band, anomaly_score, rule_flags, payload)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        str(uuid4()),
+                        payload["tenantId"],
+                        payload.get("userId"),
+                        payload.get("modelVersionId"),
+                        risk_band,
+                        anomaly_score,
+                        Json(flags),
+                        Json(features),
+                    ),
+                )
+        except Exception as e:
+            print(f"[FRAUD] Failed to save alert: {e}")
+    
+    import threading
+    threading.Thread(target=save_fraud_alert, daemon=True).start()
 
     if risk_band == "high":
         publish(
@@ -265,10 +306,18 @@ def evaluate(payload: dict, authorization: str | None = Header(None)) -> dict:
             },
         )
 
-    log_event("fraud-service", "fraud.evaluate.started", {"predictionId": payload.get("predictionId")}, correlation_id=correlation_id_ctx.get())
-    return keys_to_camel({
+    # Return result immediately - DB write is async
+    result = keys_to_camel({
         "riskBand": risk_band,
         "anomalyScore": anomaly_score,
         "riskScore": risk_score,
         "ruleFlags": flags,
     })
+    
+    log_event("fraud-service", "fraud.evaluate.completed", {
+        "predictionId": payload.get("predictionId"),
+        "riskBand": risk_band,
+        "durationMs": 0  # Could track actual duration if needed
+    }, correlation_id=correlation_id_ctx.get())
+    
+    return result

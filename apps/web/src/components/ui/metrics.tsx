@@ -20,29 +20,25 @@ export function MetricCard({
   className = "" 
 }: MetricCardProps) {
   return (
-    <Card className={`group ${className}`} hoverable border>
-      <div className="flex items-center justify-between mb-4">
-        <span className="text-[10px] font-bold text-base-500 uppercase tracking-widest group-hover:text-primary transition-colors">
+    <Card className={className} border>
+      <div className="flex items-center gap-3 mb-3">
+        {Icon && <Icon className="h-5 w-5 text-base-400" />}
+        <span className="text-sm text-base-400">
           {title}
         </span>
-        {Icon && (
-          <div className="h-8 w-8 rounded-pro bg-base-950 flex items-center justify-center border border-base-800 group-hover:border-primary/20 group-hover:bg-primary/10 transition-all">
-             <Icon className="h-4 w-4 text-base-500 group-hover:text-primary transition-all" />
-          </div>
-        )}
       </div>
-      <div className="flex items-baseline gap-2 mb-1">
-        <span className="text-3xl font-bold text-base-50 tracking-tight tabular-nums">
+      <div className="flex items-baseline gap-2">
+        <span className="text-2xl font-semibold text-base-50 tabular-nums">
           {value}
         </span>
         {trend && (
-          <span className={`text-[11px] font-bold ${trend.startsWith('+') ? 'text-success' : 'text-danger'}`}>
+          <span className={`text-xs ${trend.startsWith('+') ? 'text-success' : 'text-danger'}`}>
             {trend}
           </span>
         )}
       </div>
       {hint && (
-        <p className="text-[10px] text-base-600 font-medium uppercase tracking-wider">
+        <p className="text-xs text-base-500 mt-1">
           {hint}
         </p>
       )}
@@ -54,7 +50,7 @@ export function ShinyMetricCard(props: MetricCardProps) {
   return <MetricCard {...props} />;
 }
 
-/* ─── Activity Item (Pro Timeline) ─── */
+/* ─── Activity Item (Simplified Timeline) ─── */
 interface ActivityItemProps {
   title: string;
   subtitle: string;
@@ -69,30 +65,22 @@ export function ActivityItem({
   status = "info" 
 }: ActivityItemProps) {
   const tones = {
-    success: "bg-success border-success/20",
-    warning: "bg-warning border-warning/20",
-    info: "bg-primary border-primary/20",
-    danger: "bg-danger border-danger/20",
+    success: "bg-success",
+    warning: "bg-warning",
+    info: "bg-primary",
+    danger: "bg-danger",
   };
   
   return (
-    <div className="relative pl-6 pb-6 last:pb-0">
-      {/* Precision Node Line */}
-      <div className="absolute left-[3.5px] top-[14px] bottom-0 w-[1px] bg-base-800 last:hidden" />
-      
-      {/* Minimalist Node */}
-      <div className={`absolute left-0 top-[6px] h-2 w-2 rounded-full border-2 border-base-950 ${tones[status]} z-10`} />
-
-      <div className="group cursor-default">
-        <div className="flex justify-between items-center mb-0.5">
-          <h4 className="text-xs font-semibold text-base-100 group-hover:text-primary transition-colors">
-            {title}
-          </h4>
-          <span className="text-[10px] font-medium text-base-600 tabular-nums">{time}</span>
+    <div className="relative pl-5 pb-5 last:pb-0">
+      <div className="absolute left-[5px] top-[8px] bottom-0 w-px bg-base-800 last:hidden" />
+      <div className={`absolute left-0 top-[6px] h-2.5 w-2.5 rounded-full ${tones[status]}`} />
+      <div>
+        <div className="flex justify-between items-baseline">
+          <h4 className="text-sm text-base-200">{title}</h4>
+          <span className="text-xs text-base-500">{time}</span>
         </div>
-        <p className="text-[11px] text-base-500 leading-normal group-hover:text-base-400 transition-colors">
-          {subtitle}
-        </p>
+        <p className="text-xs text-base-500 mt-0.5">{subtitle}</p>
       </div>
     </div>
   );
@@ -100,7 +88,7 @@ export function ActivityItem({
 
 export function BentoGrid({ children, className = "" }: { children: React.ReactNode, className?: string }) {
   return (
-    <div className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-px-4 ${className}`}>
+    <div className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 ${className}`}>
         {children}
     </div>
   );

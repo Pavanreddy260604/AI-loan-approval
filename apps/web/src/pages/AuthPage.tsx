@@ -3,13 +3,15 @@ import { useForm } from "react-hook-form";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { Zap, ShieldCheck, Mail, Lock, User, ArrowRight, ChevronLeft, Fingerprint, ShieldAlert } from "lucide-react";
+import { Zap, ShieldCheck, Mail, Lock, User, ArrowRight, ChevronLeft, ShieldAlert } from "lucide-react";
 import { 
   EliteButton as Button, 
   EliteCard as Card, 
   EliteInput as Input, 
   InlineNotice, 
-  EliteInlineError as InlineError
+  EliteInlineError as InlineError,
+  OtpInput,
+  ResendButton
 } from "../components/ui";
 import { apiFetch, type AuthSession } from "../lib/api";
 import { type AuthContextValue } from "../App";
@@ -24,6 +26,7 @@ export function AuthPage({ auth }: { auth: AuthContextValue }) {
   const [mode, setMode] = useState<AuthMode>("login");
   const [emailForVerification, setEmailForVerification] = useState("");
   const [notice, setNotice] = useState("");
+  const [otpValue, setOtpValue] = useState("");
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { register, handleSubmit, reset, formState: { errors } } = useForm<any>();
@@ -95,6 +98,7 @@ export function AuthPage({ auth }: { auth: AuthContextValue }) {
   function switchMode(next: AuthMode) {
     mutation.reset();
     setNotice("");
+    setOtpValue("");
     if (next === "verify" || next === "reset") reset({});
     setMode(next);
   }
@@ -147,6 +151,7 @@ export function AuthPage({ auth }: { auth: AuthContextValue }) {
                 onSubmit={handleSubmit((values) => {
                   if (mode === "verify" || mode === "reset") {
                     values.email = emailForVerification;
+                    values.otp = otpValue;
                   }
                   mutation.mutate(values);
                 })}
@@ -211,14 +216,33 @@ export function AuthPage({ auth }: { auth: AuthContextValue }) {
                   )}
 
                   {(mode === "verify" || mode === "reset") && (
-                    <Input 
-                       label="Verification Code" 
-                       placeholder="0 0 0 0 0 0" 
-                       {...register("otp", { required: true })} 
-                       error={errors.otp && "CODE REQUIRED"}
-                       className="text-center text-lg tracking-[1em] font-black"
-                       leftIcon={<Fingerprint size={14} />}
-                    />
+                    <div className="space-y-4">
+                      <label className="block text-[11px] font-bold text-base-500 uppercase tracking-[0.1em]">
+                        Verification Code
+                      </label>
+                      <OtpInput 
+                        value={otpValue}
+                        onChange={setOtpValue}
+                        error={!!errors.otp}
+                        disabled={mutation.isPending}
+                      />
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] text-base-600">
+                          Enter the 6-digit code sent to {emailForVerification}
+                        </span>
+                        <ResendButton 
+                          onResend={() => {
+                            // Trigger the mutation with just email to resend
+                            if (mode === "verify") {
+                              mutation.mutate({ email: emailForVerification });
+                            } else {
+                              mutation.mutate({ email: emailForVerification });
+                            }
+                          }}
+                          disabled={mutation.isPending}
+                        />
+                      </div>
+                    </div>
                   )}
 
                   {mode === "reset" && (

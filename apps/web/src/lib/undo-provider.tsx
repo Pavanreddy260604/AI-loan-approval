@@ -27,8 +27,8 @@ export function UndoProvider({ children }: { children: React.ReactNode }) {
 
     setPendingActions((current) => [...current, action]);
 
-    // Schedule execution after 10 seconds
-    timeouts.current[id] = setTimeout(async () => {
+    // Execute immediately - undo window allows reverting if needed
+    const executeTimeout = setTimeout(async () => {
       try {
         await execute();
       } catch (error) {
@@ -36,18 +36,32 @@ export function UndoProvider({ children }: { children: React.ReactNode }) {
         setErrorMessage(msg);
         // Auto-dismiss error after 5s
         setTimeout(() => setErrorMessage(null), 5000);
-      } finally {
-        setPendingActions((current) => current.filter((a) => a.id !== id));
-        delete timeouts.current[id];
+        // Restore on error so user can retry
+        onUndo();
       }
+    }, 0);
+
+    // Auto-dismiss toast after undo window expires
+    timeouts.current[id] = setTimeout(() => {
+      setPendingActions((current) => current.filter((a) => a.id !== id));
+      delete timeouts.current[id];
     }, 10000);
+
+    // Store execution timeout so we can cancel if undo is clicked
+    timeouts.current[`${id}-exec`] = executeTimeout;
   };
 
   const undoAction = (id: string) => {
     const action = pendingActions.find((a) => a.id === id);
     if (action) {
+      // Cancel auto-dismiss timeout
       clearTimeout(timeouts.current[id]);
       delete timeouts.current[id];
+      // Cancel execution if still pending (within the 0ms window)
+      if (timeouts.current[`${id}-exec`]) {
+        clearTimeout(timeouts.current[`${id}-exec`]);
+        delete timeouts.current[`${id}-exec`];
+      }
       action.onUndo();
       setPendingActions((current) => current.filter((a) => a.id !== id));
     }
@@ -57,12 +71,13 @@ export function UndoProvider({ children }: { children: React.ReactNode }) {
     <UndoContext.Provider value={{ addAction }}>
       {children}
       <AnimatePresence>
-        {pendingActions.map((action) => (
+        {pendingActions.map((action, idx) => (
           <UndoToast
             key={action.id}
             message={action.message}
             onUndo={() => undoAction(action.id)}
             duration={10000}
+            stackIndex={pendingActions.length - 1 - idx}
           />
         ))}
       </AnimatePresence>

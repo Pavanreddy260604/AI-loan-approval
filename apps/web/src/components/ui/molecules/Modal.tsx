@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useCallback } from 'react';
 import { colors, spacing, borderRadius, shadows, transitions } from '../../../lib/design-tokens';
 import { useFocusTrap } from '../../../lib/accessibility/focus-trap';
+import { Portal } from '../atoms/Portal';
 
 /**
  * Modal Component Props
@@ -229,7 +230,7 @@ export const Modal = React.forwardRef<HTMLDivElement, ModalProps>(
     };
 
     return (
-      <>
+      <Portal>
         {/* Overlay */}
         <div
           style={overlayStyles}
@@ -340,7 +341,7 @@ export const Modal = React.forwardRef<HTMLDivElement, ModalProps>(
             }
           `}
         </style>
-      </>
+      </Portal>
     );
   }
 );

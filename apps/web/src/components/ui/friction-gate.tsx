@@ -18,7 +18,7 @@ export function FrictionGate({
   children, 
   confidence, 
   onConfirm, 
-  threshold = 0.7,
+  threshold = 70,
   title = "Low Confidence Signal",
   description = "The AI model has flagged this application with high uncertainty. Manual verification is strongly recommended before proceeding with this decision."
 }: FrictionGateProps) {
@@ -36,7 +36,7 @@ export function FrictionGate({
 
   return (
     <>
-      <div onClickCapture={handleClick} className="inline-block">
+      <div onClickCapture={handleClick} className="contents">
         {children}
       </div>
       

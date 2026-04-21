@@ -1,6 +1,6 @@
 import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import { AppShell } from "./components/layout";
+import { AppShell, NotificationProvider } from "./components/layout";
 import { ScrollToTop } from "./components/ScrollToTop";
 import { OfflineBanner } from "./components/OfflineBanner";
 import { clearSession, getSession, persistSession, type AuthSession } from "./lib/api";
@@ -13,6 +13,7 @@ const ModelsPage = lazy(() => import("./pages/ModelsPage").then((m) => ({ defaul
 const PredictPage = lazy(() => import("./pages/PredictPage").then((m) => ({ default: m.PredictPage })));
 const AdminPage = lazy(() => import("./pages/AdminPage").then((m) => ({ default: m.AdminPage })));
 const LoanDetailPage = lazy(() => import("./pages/LoanDetailPage").then((m) => ({ default: m.LoanDetailPage })));
+const ProfilePage = lazy(() => import("./pages/ProfilePage").then((m) => ({ default: m.ProfilePage })));
 const NotFoundPage = lazy(() => import("./pages/NotFoundPage").then((m) => ({ default: m.NotFoundPage })));
 
 export interface AuthContextValue {
@@ -92,6 +93,7 @@ function App() {
 
 import { AccessibilityProvider } from "./lib/accessibility/AccessibilityProvider";
 import { UndoProvider } from "./lib/undo-provider";
+import { ThemeProvider } from "./lib/theme-provider";
 
 // ProtectedApp wraps all authenticated routes with necessary providers
 function ProtectedApp({ auth }: { auth: AuthContextValue }) {
@@ -103,31 +105,36 @@ function ProtectedApp({ auth }: { auth: AuthContextValue }) {
   }
 
   return (
-    <AccessibilityProvider>
-      <UndoProvider>
-        <AppShell auth={auth} onLogout={handleLogout}>
-        <Suspense fallback={<GlobalSkeleton />}>
-          <Routes>
-            <Route path="/" element={<Navigate to="dashboard" replace />} />
-            <Route path="dashboard" element={<DashboardPage auth={auth} />} />
-            <Route path="datasets" element={<DatasetsPage auth={auth} />} />
-            <Route path="models" element={<ModelsPage auth={auth} />} />
-            <Route path="predict" element={<PredictPage auth={auth} />} />
-            <Route path="loan/:id" element={<LoanDetailPage auth={auth} />} />
-            <Route
-              path="admin"
-              element={
-                auth.session?.user.role === "ADMIN"
-                  ? <AdminPage auth={auth} />
-                  : <Navigate to="/app/dashboard" replace />
-              }
-            />
-            <Route path="*" element={<NotFoundPage />} />
-          </Routes>
-        </Suspense>
-        </AppShell>
-      </UndoProvider>
-    </AccessibilityProvider>
+    <ThemeProvider>
+      <NotificationProvider authToken={auth.session?.token}>
+        <AccessibilityProvider>
+          <UndoProvider>
+            <AppShell auth={auth} onLogout={handleLogout}>
+          <Suspense fallback={<GlobalSkeleton />}>
+            <Routes>
+              <Route path="/" element={<Navigate to="dashboard" replace />} />
+              <Route path="dashboard" element={<DashboardPage auth={auth} />} />
+              <Route path="datasets" element={<DatasetsPage auth={auth} />} />
+              <Route path="models" element={<ModelsPage auth={auth} />} />
+              <Route path="predict" element={<PredictPage auth={auth} />} />
+              <Route path="profile" element={<ProfilePage auth={auth} />} />
+              <Route path="loan/:id" element={<LoanDetailPage auth={auth} />} />
+              <Route
+                path="admin"
+                element={
+                  auth.session?.user.role === "ADMIN"
+                    ? <AdminPage auth={auth} />
+                    : <Navigate to="/app/dashboard" replace />
+                }
+              />
+              <Route path="*" element={<NotFoundPage />} />
+            </Routes>
+          </Suspense>
+          </AppShell>
+          </UndoProvider>
+        </AccessibilityProvider>
+      </NotificationProvider>
+    </ThemeProvider>
   );
 }
 

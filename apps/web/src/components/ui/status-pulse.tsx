@@ -26,7 +26,7 @@ export function StatusPulse({
         <span className={`relative inline-flex rounded-full h-2 w-2 ${colors[tone]}`}></span>
       </div>
       {label && (
-        <span className="text-[11px] font-bold text-white/90 uppercase tracking-[0.1em] group-hover:text-white transition-colors">
+        <span className="text-[11px] font-bold text-base-50/90 uppercase tracking-[0.1em] group-hover:text-base-50 transition-colors">
           {label}
         </span>
       )}

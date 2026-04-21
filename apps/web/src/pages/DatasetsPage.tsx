@@ -1,22 +1,25 @@
 import { useEffect, useMemo, useState } from "react";
+import { useBeforeUnload } from "../hooks/useBeforeUnload";
+import { useAutoSave } from "../hooks/useAutoSave";
+import { useFileUpload } from "../hooks/useFileUpload";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { 
-  CheckCircle2, 
-  Database, 
-  FileSpreadsheet, 
-  LoaderCircle, 
-  Play, 
-  Search, 
-  Plus, 
-  Filter, 
-  Info, 
-  Upload, 
+import {
+  CheckCircle2,
+  Database,
+  FileSpreadsheet,
+  LoaderCircle,
+  Play,
+  Plus,
+  Info,
+  Upload,
   Target,
   ArrowRight,
-  ArrowLeft
+  ArrowLeft,
+  Trash2,
+  AlertTriangle
 } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
-import { 
+import {
   EliteCard as Card,
   EliteBadge as Badge,
   EliteButton as Button,
@@ -25,7 +28,11 @@ import {
   Table,
   type TableColumn,
   EliteSkeletonLoader as SkeletonLoader,
-  EliteInlineError as InlineError
+  EliteInlineError as InlineError,
+  Modal,
+  UploadProgress,
+  Tooltip,
+  useToast
 } from "../components/ui";
 import { apiFetch } from "../lib/api";
 import { type AuthContextValue } from "../App";
@@ -281,12 +288,19 @@ function buildMappingValidation(preview: PreviewData | undefined, mapping: Mappi
 
 export function DatasetsPage({ auth }: { auth: AuthContextValue }) {
   const queryClient = useQueryClient();
+  const toast = useToast();
   const [mode, setMode] = useState<PageMode>("list");
   const [selectedDataset, setSelectedDataset] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [datasetSearch, setDatasetSearch] = useState("");
   const [mapping, setMapping] = useState<MappingState>(EMPTY_MAPPING);
   const [initializedDatasetId, setInitializedDatasetId] = useState<string | null>(null);
+  const [initialMapping, setInitialMapping] = useState<MappingState | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<DatasetListItem | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadSuccess, setUploadSuccess] = useState(false);
+
+  // File upload with progress
+  const { upload, cancel, isUploading, percentage } = useFileUpload();
 
   const datasets = useQuery<DatasetListItem[]>({
     queryKey: ["datasets", auth.session?.token],
@@ -304,19 +318,30 @@ export function DatasetsPage({ auth }: { auth: AuthContextValue }) {
     },
   });
 
-  const uploadMutation = useMutation({
-    mutationFn: async () => {
-      if (!selectedFile) throw new Error("Choose a file before continuing.");
-      const formData = new FormData();
-      formData.append("file", selectedFile);
-      return apiFetch<any>("/datasets", { method: "POST", token: auth.session?.token, rawBody: formData });
-    },
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ["datasets"] });
-      setSelectedDataset(data.id);
-      setMode("mapping");
-    },
-  });
+  const handleUpload = async () => {
+    if (!selectedFile) return;
+    setUploadError(null);
+    setUploadSuccess(false);
+    
+    try {
+      await upload(selectedFile, {
+        url: `${import.meta.env.VITE_API_GATEWAY_URL || 'http://localhost:4000'}/api/v1/datasets`,
+        token: auth.session?.token,
+        onSuccess: (data) => {
+          setUploadSuccess(true);
+          queryClient.invalidateQueries({ queryKey: ["datasets"] });
+          setSelectedDataset(data.id);
+          setMode("mapping");
+        },
+        onError: (error) => {
+          setUploadError(error.message);
+          toast.error(error.message);
+        }
+      });
+    } catch {
+      // Error handled in onError callback
+    }
+  };
 
   const mappingMutation = useMutation({
     mutationFn: async () => {
@@ -333,10 +358,14 @@ export function DatasetsPage({ auth }: { auth: AuthContextValue }) {
       });
     },
     onSuccess: () => {
+       toast.success("Schema saved. Dataset is ready for training.");
        queryClient.invalidateQueries({ queryKey: ["datasets"] });
        setMode("list");
        setSelectedDataset(null);
        setInitializedDatasetId(null);
+    },
+    onError: (err: any) => {
+       toast.error(err?.message || "Failed to save schema mapping. Please try again.");
     }
   });
 
@@ -349,22 +378,72 @@ export function DatasetsPage({ auth }: { auth: AuthContextValue }) {
       });
     },
     onSuccess: () => {
-       queryClient.invalidateQueries({ queryKey: ["datasets"] });
-       // Logic to show a standard "Training Started" notice could be added here
-    }
+      queryClient.invalidateQueries({ queryKey: ["datasets"] });
+      queryClient.invalidateQueries({ queryKey: ["models"] });
+      toast.success("Training started. Track progress on the Models page.");
+    },
+    onError: (err: any) => {
+      toast.error(err?.message || "Training failed to start. Please try again.");
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (datasetId: string) =>
+      apiFetch(`/datasets/${datasetId}`, { method: "DELETE", token: auth.session?.token }),
+    onSuccess: (_result, deletedDatasetId) => {
+      queryClient.invalidateQueries({ queryKey: ["datasets"] });
+      queryClient.invalidateQueries({ queryKey: ["models"] });
+      queryClient.invalidateQueries({ queryKey: ["model-versions"] });
+      queryClient.removeQueries({ queryKey: ["dataset-preview", deletedDatasetId] });
+      if (selectedDataset === deletedDatasetId) {
+        setMode("list");
+        setSelectedDataset(null);
+        setMapping(EMPTY_MAPPING);
+        setInitialMapping(null);
+        setInitializedDatasetId(null);
+      }
+      toast.success("Dataset deleted and related model access removed.");
+      setDeleteTarget(null);
+    },
+    onError: (err: any) => {
+      toast.error(err?.message || "Delete failed. Please try again.");
+    },
   });
 
   useEffect(() => {
     if (!preview.data || !selectedDataset || initializedDatasetId === selectedDataset) return;
-    setMapping(buildInitialMapping(preview.data));
+    const initial = buildInitialMapping(preview.data);
+    setMapping(initial);
+    setInitialMapping(initial);
     setInitializedDatasetId(selectedDataset);
   }, [preview.data, selectedDataset, initializedDatasetId]);
 
+  // Detect unsaved changes in mapping mode
+  const hasUnsavedMappingChanges = useMemo(() => {
+    if (mode !== "mapping" || !initialMapping) return false;
+    return (
+      mapping.targetColumn !== initialMapping.targetColumn ||
+      mapping.positiveLabelKey !== initialMapping.positiveLabelKey ||
+      mapping.excludedColumns.length !== initialMapping.excludedColumns.length ||
+      mapping.excludedColumns.some((col, i) => col !== initialMapping.excludedColumns[i]) ||
+      mapping.idColumn !== initialMapping.idColumn
+    );
+  }, [mode, mapping, initialMapping]);
+
+  // Warn before leaving with unsaved changes
+  useBeforeUnload(hasUnsavedMappingChanges, "You have unsaved mapping changes. Are you sure you want to leave?");
+
+  // Auto-save mapping every 5 seconds when in mapping mode
+  useAutoSave({
+    key: `dataset-mapping-${selectedDataset || 'draft'}`,
+    data: mapping,
+    interval: 5000,
+    enabled: mode === "mapping" && !!selectedDataset,
+  });
+
   const filteredDatasets = useMemo(() => {
-    const search = datasetSearch.trim().toLowerCase();
-    if (!search) return datasets.data ?? [];
-    return (datasets.data ?? []).filter((d) => d.fileName.toLowerCase().includes(search));
-  }, [datasetSearch, datasets.data]);
+    return datasets.data ?? [];
+  }, [datasets.data]);
 
   const validation = useMemo(() => buildMappingValidation(preview.data, mapping), [preview.data, mapping]);
 
@@ -383,39 +462,86 @@ export function DatasetsPage({ auth }: { auth: AuthContextValue }) {
     {
       header: 'Status',
       accessor: 'status',
-      render: (row) => (
-        <Badge tone={row.status === 'mapped' ? 'success' : row.status === 'processing' ? 'warning' : 'ghost'}>
-           {row.status}
-        </Badge>
-      ),
+      render: (row) => {
+        const statusMap: Record<string, { tone: 'success' | 'warning' | 'danger' | 'ghost' | 'primary'; label: string }> = {
+          mapped: { tone: 'success', label: 'Ready' },
+          ready: { tone: 'success', label: 'Ready' },
+          processing: { tone: 'warning', label: 'Profiling' },
+          profiling: { tone: 'warning', label: 'Profiling' },
+          pending: { tone: 'ghost', label: 'Pending' },
+          uploaded: { tone: 'primary', label: 'Uploaded' },
+          failed: { tone: 'danger', label: 'Failed' },
+          error: { tone: 'danger', label: 'Failed' },
+        };
+        const normalized = (row.status ?? 'unknown').toString().toLowerCase();
+        const config = statusMap[normalized] ?? { tone: 'ghost' as const, label: normalized || 'Unknown' };
+        return (
+          <Badge tone={config.tone}>
+            {config.label}
+          </Badge>
+        );
+      },
     },
     {
       header: 'Rows',
       accessor: 'rowCount',
-      className: 'text-sm font-bold text-base-200 tabular-nums',
+      className: 'text-sm font-bold text-base-200 tabular-nums hidden sm:table-cell',
       render: (row) => row.rowCount.toLocaleString(),
     },
     {
       header: 'Actions',
       accessor: 'id',
       className: 'text-right',
-      render: (row) => (
-        <div className="flex items-center justify-end gap-2">
-           <Button variant="outline" size="sm" onClick={() => { setSelectedDataset(row.id); setMode("mapping"); }}>
-             Configure
-           </Button>
-            <Button 
-             variant="primary" 
-             size="sm" 
-             leftIcon={<Play size={12} />} 
-             loading={calibrateMutation.isPending && calibrateMutation.variables === row.id}
-             onClick={() => calibrateMutation.mutate(row.id)}
-             disabled={row.status !== 'mapped' || calibrateMutation.isPending}
-           >
-             Train Model
-           </Button>
-        </div>
-      ),
+      render: (row) => {
+        const disabledReason =
+          row.status !== 'mapped'
+            ? row.status === 'processing'
+              ? 'Dataset is still being profiled. Wait until profiling completes.'
+              : 'Map the target column before training can start.'
+            : calibrateMutation.isPending && calibrateMutation.variables === row.id
+              ? 'Training request already in flight.'
+              : null;
+
+        const trainButton = (
+          <Button
+            variant="primary"
+            size="sm"
+            leftIcon={<Play size={12} />}
+            loading={calibrateMutation.isPending && calibrateMutation.variables === row.id}
+            onClick={() => calibrateMutation.mutate(row.id)}
+            disabled={!!disabledReason}
+          >
+            Train Model
+          </Button>
+        );
+
+        return (
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={() => { setSelectedDataset(row.id); setMode("mapping"); }}>
+              Configure
+            </Button>
+            {disabledReason ? (
+              <Tooltip content={disabledReason} placement="top">
+                <span>{trainButton}</span>
+              </Tooltip>
+            ) : (
+              trainButton
+            )}
+            <Tooltip content="Delete this dataset" placement="top">
+              <Button
+                variant="ghost"
+                size="sm"
+                leftIcon={<Trash2 size={12} />}
+                onClick={() => setDeleteTarget(row)}
+                disabled={deleteMutation.isPending}
+                aria-label={`Delete dataset ${row.fileName}`}
+              >
+                Delete
+              </Button>
+            </Tooltip>
+          </div>
+        );
+      },
     },
   ];
 
@@ -472,42 +598,56 @@ export function DatasetsPage({ auth }: { auth: AuthContextValue }) {
 
   return (
     <div className="space-y-8 animate-in">
-      <div className="flex flex-col md:flex-row items-center justify-between gap-6">
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div className="flex flex-col">
-           <span className="text-[10px] font-bold text-base-600 uppercase tracking-widest leading-none">Data Management</span>
-           <h1 className="text-2xl font-bold tracking-tight text-base-50">Datasets</h1>
+           <h1 className="text-xl sm:text-2xl font-semibold text-base-50">Datasets</h1>
            <p className="text-sm text-base-500 mt-1">Manage your data and configure results.</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 w-full md:w-auto">
            {mode === "list" ? (
-            <Button onClick={() => setMode("upload")} variant="primary" leftIcon={<Plus size={16} />}>
+            <Button onClick={() => setMode("upload")} variant="primary" leftIcon={<Plus size={16} />} className="w-full md:w-auto">
               Upload Dataset
             </Button>
           ) : (
-            <Button variant="secondary" onClick={() => setMode("list")} leftIcon={<ArrowLeft size={16} />}>
+            <Button variant="secondary" onClick={() => setMode("list")} leftIcon={<ArrowLeft size={16} />} className="w-full md:w-auto">
               Back to Datasets
             </Button>
           )}
         </div>
       </div>
 
-      {/* Workflow Stepper */}
-      <div className="grid grid-cols-5 gap-4">
-        {WORKFLOW_STEPS.map((step, i) => {
-          const isActive = i === (mode === 'upload' ? 0 : mode === 'mapping' ? 1 : 0);
-          return (
-            <div 
-              key={i} 
-              className={`p-4 border rounded-pro overflow-hidden relative transition-all duration-300 ${isActive ? 'border-primary/20 bg-primary/5' : 'border-base-800 bg-base-900/40 opacity-50'}`}
-            >
-               <div className="flex flex-col">
-                  <span className={`text-[9px] font-bold uppercase tracking-widest leading-none mb-2 ${isActive ? 'text-primary' : 'text-base-600'}`}>Step 0{i+1}</span>
-                  <p className={`text-xs font-bold uppercase tracking-wider ${isActive ? 'text-base-50' : 'text-base-500'}`}>{step}</p>
-               </div>
-               {isActive && <div className="absolute bottom-0 left-0 h-1 bg-primary w-full animate-in slide-in-from-left duration-700" />}
-            </div>
-          );
-        })}
+      {/* Workflow Stepper - horizontal scroll on mobile, grid on md+ */}
+      <div className="-mx-4 sm:mx-0 overflow-x-auto">
+        <div className="grid grid-flow-col auto-cols-[minmax(120px,1fr)] sm:grid-flow-row sm:auto-cols-auto sm:grid-cols-5 gap-3 sm:gap-4 px-4 sm:px-0 min-w-max sm:min-w-0">
+          {WORKFLOW_STEPS.map((step, i) => {
+            const activeIndex = mode === 'upload' ? 0 : mode === 'mapping' ? 1 : -1;
+            const isActive = i === activeIndex;
+            const isComplete = activeIndex !== -1 && i < activeIndex;
+            return (
+              <div
+                key={i}
+                className={`p-3 sm:p-4 border rounded-lg relative ${
+                  isActive
+                    ? 'border-primary bg-primary/5'
+                    : isComplete
+                      ? 'border-success bg-success/5'
+                      : 'border-base-800 bg-base-900'
+                }`}
+              >
+                 <div className="flex flex-col">
+                    <span className={`text-xs mb-1 ${
+                      isActive ? 'text-primary' : isComplete ? 'text-success' : 'text-base-500'
+                    }`}>Step {i+1}</span>
+                    <p className={`text-sm truncate ${
+                      isActive ? 'text-base-50' : isComplete ? 'text-base-200' : 'text-base-400'
+                    }`}>{step}</p>
+                 </div>
+                 {isActive && <div className="absolute bottom-0 left-0 h-1 bg-primary w-full animate-in slide-in-from-left duration-700" />}
+                 {isComplete && <div className="absolute bottom-0 left-0 h-1 bg-success/60 w-full" />}
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       <AnimatePresence mode="wait">
@@ -519,37 +659,28 @@ export function DatasetsPage({ auth }: { auth: AuthContextValue }) {
             exit={{ opacity: 0, y: -10 }} 
             className="space-y-8"
           >
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 sm:gap-6">
                <ShinyMetricCard title="Total Datasets" value={datasets.data?.length ?? 0} icon={Database} />
                <ShinyMetricCard title="Ready for Training" value={datasets.data?.filter(d => d.status === 'mapped').length ?? 0} icon={CheckCircle2} />
                <ShinyMetricCard title="Processing" value={datasets.data?.filter(d => d.status === 'processing').length ?? 0} icon={LoaderCircle} />
             </div>
 
             <div className="space-y-4">
-               <div className="flex items-center justify-between">
-                  <h2 className="text-xl font-bold tracking-tight">Your Datasets</h2>
-                  <div className="flex items-center gap-2 px-3 py-1.5 bg-base-900 border border-base-800 rounded-pro text-[10px] font-bold text-base-500 hover:text-base-300 transition-colors">
-                     <Search size={14} className="mr-2" /> 
-                     <input
-                       placeholder="Search datasets..."
-                       className="bg-transparent border-none text-[11px] p-0 focus:ring-0 w-32 outline-none"
-                       onChange={(e) => setDatasetSearch(e.target.value)}
-                       aria-label="Search datasets"
-                     />
-                  </div>
-               </div>
+               <h2 className="text-lg sm:text-xl font-bold tracking-tight">Your Datasets</h2>
 
-               <Table
-                 data={filteredDatasets}
-                 columns={datasetColumns}
-                 loading={datasets.isLoading}
-                 className="shadow-2xl"
-               />
+               <div className="-mx-4 sm:mx-0 overflow-x-auto">
+                 <Table
+                   data={filteredDatasets}
+                   columns={datasetColumns}
+                   loading={datasets.isLoading}
+                   className="shadow-2xl min-w-[720px] sm:min-w-0"
+                 />
+               </div>
                {filteredDatasets.length === 0 && !datasets.isLoading && (
                  <div className="py-16 text-center border border-base-800 rounded-lg bg-base-900/20">
                    <p className="text-sm text-base-400">No datasets found.</p>
                    <p className="text-xs text-base-600 mt-1">
-                     {datasetSearch ? "Try a different search term." : "Upload a dataset to get started."}
+                     Upload a dataset to get started.
                    </p>
                  </div>
                )}
@@ -572,73 +703,112 @@ export function DatasetsPage({ auth }: { auth: AuthContextValue }) {
                     <p className="text-sm text-base-500">Provide a file (CSV/XLSX) containing loan data to train your model.</p>
                  </div>
                 
-                <div className="p-12 border-2 border-dashed border-base-800 rounded-pro-lg hover:border-primary/40 focus-within:border-primary/60 transition-all group cursor-pointer relative bg-base-950/40">
-                   <input 
-                     type="file" 
-                     className="absolute inset-0 opacity-0 cursor-pointer z-10" 
-                     onChange={(e) => setSelectedFile(e.target.files?.[0] || null)} 
-                   />
-                   <div className="space-y-2">
-                      <p className="text-sm font-bold text-base-200">{selectedFile?.name || "Drop files here or click to browse"}</p>
-                      <p className="text-[10px] text-base-600 font-bold uppercase tracking-widest">Max size 50MB • Tabular format required</p>
-                   </div>
-                </div>
+                {selectedFile ? (
+                  <UploadProgress
+                    fileName={selectedFile.name}
+                    percentage={percentage}
+                    isUploading={isUploading}
+                    isSuccess={uploadSuccess}
+                    isError={!!uploadError}
+                    errorMessage={uploadError || undefined}
+                    onCancel={cancel}
+                    onRetry={handleUpload}
+                  />
+                ) : (
+                  <div className="p-12 border-2 border-dashed border-base-800 rounded-pro-lg hover:border-primary/40 focus-within:border-primary/60 transition-all group cursor-pointer relative bg-base-950/40" style={{ minHeight: '160px' }}>
+                     <input
+                       type="file"
+                       accept=".csv,.txt,.tsv,.xls,.xlsx,.xlsm,.ods,.parquet,.json,text/csv,text/plain,text/tab-separated-values,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.oasis.opendocument.spreadsheet,application/json"
+                       className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-50"
+                       onChange={(e) => {
+                         const file = e.target.files?.[0] || null;
+                         if (file && file.size > 50 * 1024 * 1024) {
+                           setUploadError(`File too large (${(file.size / 1024 / 1024).toFixed(1)} MB). Maximum is 50 MB.`);
+                           setSelectedFile(null);
+                           e.target.value = "";
+                           return;
+                         }
+                         setSelectedFile(file);
+                         setUploadError(null);
+                         setUploadSuccess(false);
+                       }}
+                     />
+                     <div className="space-y-2">
+                        <p className="text-sm font-bold text-base-200">Drop files here or click to browse</p>
+                        <p className="text-[10px] text-base-600 font-bold uppercase tracking-widest">CSV or Excel • Max 50 MB</p>
+                     </div>
+                  </div>
+                )}
 
                 <div className="flex items-center gap-3 pt-4">
-                   <Button variant="ghost" className="flex-1" onClick={() => setMode("list")}>Discard</Button>
+                   <Button 
+                     variant="ghost" 
+                     className="flex-1" 
+                     onClick={() => {
+                       setMode("list");
+                       setSelectedFile(null);
+                       setUploadError(null);
+                     }}
+                     disabled={isUploading}
+                   >
+                     Discard
+                   </Button>
                    <Button 
                       variant="primary" 
                       className="flex-1" 
-                      loading={uploadMutation.isPending} 
-                      onClick={() => uploadMutation.mutate()} 
-                      disabled={!selectedFile}
+                      loading={isUploading} 
+                      onClick={handleUpload} 
+                      disabled={!selectedFile || isUploading}
                    >
-                      Start Analysis
+                      {isUploading ? 'Uploading...' : 'Start Analysis'}
                    </Button>
                 </div>
              </Card>
           </motion.div>
         ) : (
-          <motion.div 
-            key="mapping" 
-            initial={{ opacity: 0 }} 
-            animate={{ opacity: 1 }} 
-            exit={{ opacity: 0 }} 
-            className="grid grid-cols-1 lg:grid-cols-12 gap-8"
+          <motion.div
+            key="mapping"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8"
           >
-             <div className="lg:col-span-8 space-y-6">
-                <div className="flex items-center justify-between mb-2">
-                    <h3 className="text-xl font-bold tracking-tight flex items-center gap-3">
-                       <Target className="h-5 w-5 text-primary" />
+             <div className="lg:col-span-8 space-y-4 sm:space-y-6 min-w-0">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-2">
+                    <h3 className="text-lg sm:text-xl font-bold tracking-tight flex items-center gap-3">
+                       <Target className="h-5 w-5 text-primary shrink-0" />
                        Configure Columns
                     </h3>
-                   <div className="flex items-center gap-2">
-                      <Button variant="outline" size="xs" leftIcon={<Search size={12} />}>Search Fields</Button>
-                      <Button variant="outline" size="xs" leftIcon={<Filter size={12} />}>Filter</Button>
+                   <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-[10px] font-bold text-base-500 uppercase tracking-widest">
+                         {preview.data?.columns?.length ?? 0} columns detected
+                      </span>
                    </div>
                 </div>
 
                 {preview.isError && (
                   <InlineError message={(preview.error as Error).message} />
                 )}
-                <Table
-                   data={preview.data?.columns || []}
-                   columns={schemaColumns}
-                   loading={preview.isLoading}
-                   rowId="name"
-                   onRowClick={(row) => {
-                      const suitability = getColumnSuitability(row);
-                      if (suitability.selectable) {
-                         setMapping(m => ({ ...m, targetColumn: row.name }));
-                      }
-                   }}
-                   className="shadow-2xl"
-                />
+                <div className="-mx-4 sm:mx-0 overflow-x-auto">
+                  <Table
+                     data={preview.data?.columns || []}
+                     columns={schemaColumns}
+                     loading={preview.isLoading}
+                     rowId="name"
+                     onRowClick={(row) => {
+                        const suitability = getColumnSuitability(row);
+                        if (suitability.selectable) {
+                           setMapping(m => ({ ...m, targetColumn: row.name }));
+                        }
+                     }}
+                     className="shadow-2xl min-w-[560px] sm:min-w-0"
+                  />
+                </div>
              </div>
 
-             {/* Sticky Control Panel */}
+             {/* Sticky Control Panel - NOT sticky on mobile to avoid cramped layout */}
              <div className="lg:col-span-4 space-y-6">
-                <div className="sticky top-[72px]">
+                <div className="lg:sticky lg:top-[72px]">
                    <Card border padded className="bg-base-900 border-base-800 shadow-xl overflow-hidden">
                       <div className="space-y-8">
                          <div className="space-y-4">
@@ -723,6 +893,53 @@ export function DatasetsPage({ auth }: { auth: AuthContextValue }) {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Delete confirmation dialog */}
+      <Modal
+        open={!!deleteTarget}
+        onClose={() => !deleteMutation.isPending && setDeleteTarget(null)}
+        title="Delete dataset?"
+        size="sm"
+        footer={
+          <div className="flex items-center justify-end gap-3">
+            <Button
+              variant="ghost"
+              onClick={() => setDeleteTarget(null)}
+              disabled={deleteMutation.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              loading={deleteMutation.isPending}
+              onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
+            >
+              Delete permanently
+            </Button>
+          </div>
+        }
+      >
+        <div className="flex items-start gap-3">
+          <div className="h-10 w-10 rounded-full bg-danger/10 border border-danger/30 flex items-center justify-center text-danger flex-shrink-0">
+            <AlertTriangle size={20} />
+          </div>
+          <div className="space-y-2">
+            <p className="text-sm text-base-100">
+              You're about to permanently delete
+              {" "}
+              <span className="font-bold text-base-50">{deleteTarget?.fileName ?? "this dataset"}</span>
+              {" "}
+              and all its schema metadata.
+            </p>
+            <p className="text-xs text-base-500">
+              Models and prediction inputs tied to this dataset will disappear from the workspace after deletion. This cannot be undone.
+            </p>
+            {deleteMutation.isError && (
+              <InlineError message={(deleteMutation.error as Error)?.message ?? "Delete failed."} />
+            )}
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

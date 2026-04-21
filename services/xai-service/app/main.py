@@ -47,7 +47,7 @@ JWT_PUBLIC_KEY_BASE64 = env("JWT_PUBLIC_KEY_BASE64", "")
 JWT_ISSUER = env("JWT_ISSUER", "")
 JWT_AUDIENCE = env("JWT_AUDIENCE", "")
 XAI_KERNEL_BACKGROUND_LIMIT = int(env("XAI_KERNEL_BACKGROUND_LIMIT", "50"))
-XAI_KERNEL_NSAMPLES = int(env("XAI_KERNEL_NSAMPLES", "200"))
+XAI_KERNEL_NSAMPLES = int(env("XAI_KERNEL_NSAMPLES", "50"))  # Reduced from 200 for faster responses
 
 app = FastAPI(title="xai-service")
 
@@ -163,8 +163,28 @@ def local_explanation(payload: dict, authorization: str | None = Header(None)) -
         raise HTTPException(status_code=403, detail="Forbidden")
     log_event("xai-service", "explanation.local.started", {"artifactKey": payload.get("artifactKey")}, correlation_id=correlation_id_ctx.get())
     bundle = load_bundle(payload["artifactKey"])
-    frame = pd.DataFrame([payload["features"]])
-    transformed = bundle["preprocessor"].transform(frame)
+    
+    # Ensure all expected columns are present (fill missing with 0)
+    features = payload["features"].copy()
+    if hasattr(bundle["preprocessor"], 'feature_names_in_'):
+        expected_cols = bundle["preprocessor"].feature_names_in_
+        for col in expected_cols:
+            if col not in features:
+                features[col] = 0
+    
+    frame = pd.DataFrame([features])
+    
+    try:
+        transformed = bundle["preprocessor"].transform(frame)
+    except ValueError as e:
+        log_event("xai-service", "explanation.transform_failed", {"error": str(e)}, level="ERROR", correlation_id=correlation_id_ctx.get())
+        # Return a placeholder explanation when transformation fails
+        return keys_to_camel({
+            "topContributors": [],
+            "summary": {"positiveDrivers": [], "negativeDrivers": []},
+            "approximationInfo": {"isApproximated": True, "nsamples": None, "method": "Fallback (transform error)"}
+        })
+    
     dense = transformed.toarray() if hasattr(transformed, "toarray") else np.asarray(transformed)
     background = np.asarray(bundle["background_transformed"])
     approximated = False
@@ -185,9 +205,14 @@ def local_explanation(payload: dict, authorization: str | None = Header(None)) -
         explainer = shap.LinearExplainer(bundle["model"], background)
         values = explainer.shap_values(dense)[0]
     else:
-        background_limit = XAI_KERNEL_BACKGROUND_LIMIT
-        nsamples = XAI_KERNEL_NSAMPLES
-        explainer = shap.KernelExplainer(lambda items: predict_transformed(bundle, items), background[:background_limit])
+        # Use smaller background and samples for faster computation
+        background_limit = min(XAI_KERNEL_BACKGROUND_LIMIT, 20)  # Limit background size
+        nsamples = XAI_KERNEL_NSAMPLES  # Default 50, much faster than 200
+        
+        explainer = shap.KernelExplainer(
+            lambda items: predict_transformed(bundle, items), 
+            background[:background_limit]
+        )
         values = explainer.shap_values(dense, nsamples=nsamples)
         if isinstance(values, list):
             values = values[1] if len(values) > 1 else values[0]

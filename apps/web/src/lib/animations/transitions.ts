@@ -22,9 +22,9 @@ export const transitions = {
   /** Narrative, standard transitions (Modals, cards) */
   base: {
     type: 'spring',
-    stiffness: 300,
-    damping: 35,
-    mass: 1
+    stiffness: 400,
+    damping: 40,
+    mass: 0.8
   },
   /** Soft, atmospheric entries (Page content, toasts) */
   gentle: {
@@ -39,12 +39,11 @@ export const transitions = {
  * Standard Platform Variants
  */
 export const variants: Record<string, Variants> = {
-  /** Vertical content entry */
+  /** Vertical content entry - reduced motion for less jarring page transitions */
   fadeInUp: {
-    initial: { opacity: 0, y: 20 },
-    animate: { opacity: 1, y: 0 },
-    exit: { opacity: 0, y: -20 },
-    transition: transitions.base
+    initial: { opacity: 0, y: 8, transition: { type: 'tween', duration: 0.15, ease: 'easeOut' } },
+    animate: { opacity: 1, y: 0, transition: { type: 'tween', duration: 0.15, ease: 'easeOut' } },
+    exit: { opacity: 0, y: -8, transition: { type: 'tween', duration: 0.15, ease: 'easeOut' } }
   },
   /** Component expansion or pop (Modals) */
   scaleIn: {

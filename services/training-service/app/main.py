@@ -277,7 +277,26 @@ def resolve_model(
             version = cur.fetchone()
             if not version:
                 raise HTTPException(status_code=404, detail="Model version not found")
-            
+
+            # Fallback: fraud artifacts are trained only for the champion of
+            # each model, so non-champion versions (or pre-fraud-worker
+            # champions) return null and the UI renders 0%. Borrow any
+            # sibling version's fraud artifact for the same model.
+            if not version.get("fraud_artifact_key") and version.get("model_id"):
+                cur.execute(
+                    """
+                    SELECT fraud_artifact_key FROM model_versions
+                    WHERE model_id = %s AND tenant_id = %s
+                      AND fraud_artifact_key IS NOT NULL
+                    ORDER BY is_champion DESC, created_at DESC
+                    LIMIT 1
+                    """,
+                    (version["model_id"], tenantId),
+                )
+                sibling = cur.fetchone()
+                if sibling and sibling.get("fraud_artifact_key"):
+                    version["fraud_artifact_key"] = sibling["fraud_artifact_key"]
+
             # Dual-key support for synchronization proofing
             res = keys_to_camel(version)
             if "artifact_key" in version:

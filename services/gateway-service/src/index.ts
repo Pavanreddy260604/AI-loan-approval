@@ -40,15 +40,20 @@ const env = loadEnv(
     XAI_SERVICE_URL: z.string(),
     FRAUD_SERVICE_URL: z.string(),
     ANALYTICS_SERVICE_URL: z.string(),
+    NOTIFICATION_SERVICE_URL: z.string().default("http://notification-service:4005"),
   }),
 );
 
 const logger = createLogger("gateway-service");
 const app = express();
+const corsOrigins = env.CORS_ORIGIN.split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+const allowedCorsOrigin = corsOrigins.length === 1 ? corsOrigins[0] : corsOrigins;
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: env.CORS_ORIGIN,
+    origin: allowedCorsOrigin,
     credentials: true,
   },
 });
@@ -119,7 +124,7 @@ app.use((req, res, next) => {
 
 app.use(
   cors({
-    origin: env.CORS_ORIGIN,
+    origin: allowedCorsOrigin,
     credentials: true,
   }),
 );
@@ -263,17 +268,50 @@ function normalizeModelVersion(v: any): any {
   };
 }
 
+function filterModelsByDatasetIds(models: any[], datasetIds: Set<string>): any[] {
+  return models.filter((model) => typeof model?.datasetId === "string" && datasetIds.has(model.datasetId));
+}
+
+async function loadTenantDatasetRegistry(req: AuthenticatedRequest): Promise<{
+  ok: boolean;
+  datasets: any[];
+  datasetIds: Set<string>;
+}> {
+  const result = await safeServiceJson(`${env.DATA_SERVICE_URL}/datasets`, {
+    headers: { Authorization: req.headers.authorization },
+  }, []);
+  const datasets = result.ok && Array.isArray(result.body) ? result.body.map(normalizeDataset) : [];
+  return {
+    ok: result.ok,
+    datasets,
+    datasetIds: new Set(datasets.map((dataset) => dataset.id)),
+  };
+}
+
 function normalizePredictionRecord(p: any): any {
   if (!p) return p;
+  const fraudBlob = p.fraud ?? null;
+  const fraudScore = p.fraud_score ?? p.fraudScore ?? (fraudBlob && typeof fraudBlob === "object" ? fraudBlob.riskScore ?? fraudBlob.risk_score ?? null : null);
+  // Shape fraud to match fraudEvaluationSchema so the UI's prediction.fraud.riskScore path resolves.
+  const fraud = fraudBlob && typeof fraudBlob === "object"
+    ? {
+        riskBand: fraudBlob.riskBand ?? fraudBlob.risk_band ?? "unknown",
+        anomalyScore: fraudBlob.anomalyScore ?? fraudBlob.anomaly_score ?? null,
+        riskScore: fraudBlob.riskScore ?? fraudBlob.risk_score ?? fraudScore ?? null,
+        ruleFlags: fraudBlob.ruleFlags ?? fraudBlob.rule_flags ?? [],
+      }
+    : null;
   return {
     id: p.id,
+    predictionId: p.id,
     datasetId: p.dataset_id || p.datasetId,
     modelVersionId: p.model_version_id || p.modelVersionId,
     decision: p.decision,
     probability: Number(p.probability ?? 0),
     features: p.features || {},
-    fraudScore: p.fraud_score ?? p.fraudScore ?? null,
-    fraudSignals: p.fraud_signals ?? p.fraudSignals ?? null,
+    fraud,
+    fraudScore,
+    fraudSignals: p.fraud_signals ?? p.fraudSignals ?? (fraud?.ruleFlags ?? null),
     explanation: p.explanation ?? null,
     reviewStatus: p.review_status || p.reviewStatus || "pending",
     reviewedBy: p.reviewed_by || p.reviewedBy || null,
@@ -308,9 +346,6 @@ function normalizeBatchJob(b: any): any {
   };
 }
 
-const NIL_UUID = "00000000-0000-0000-0000-000000000000";
-
-
 function normalizeDecision(decision: any): string {
   const normalized = String(decision ?? "").toLowerCase();
   if (decision === true || ["approved", "approve", "yes", "true"].includes(normalized)) {
@@ -326,21 +361,6 @@ const UNLIMITED_BALANCE = {
   available: 999999,
   used: 0,
 };
-
-function normalizeFraud(body: any) {
-  if (!body) {
-    return { riskBand: "unknown", anomalyScore: null, riskScore: null, ruleFlags: [], unavailable: true };
-  }
-  return {
-    riskBand: body.riskBand ?? body.risk_band ?? "unknown",
-    anomalyScore: body.anomalyScore ?? body.anomaly_score ?? null,
-    riskScore: body.riskScore ?? body.risk_score ?? body.fraudScore ?? body.fraud_score ?? null,
-    ruleFlags: body.ruleFlags ?? body.rule_flags ?? [],
-    ...(body.unavailable ? { unavailable: true } : {}),
-  };
-}
-
-// End of utility functions
 
 // Rate Limiting
 function createRateLimiter(options: {
@@ -466,13 +486,11 @@ app.get("/api/v1/me", authenticate, async (req: AuthenticatedRequest, res) => {
 
 app.get("/api/v1/dashboard", authenticate, async (req: AuthenticatedRequest, res) => {
   try {
-    const [analytics, datasets, models, pendingPredictions, recentDecisions] = await Promise.all([
+    const [analytics, datasetRegistry, models, pendingPredictions, recentDecisions] = await Promise.all([
       safeServiceJson(`${env.ANALYTICS_SERVICE_URL}/internal/analytics/tenant/${req.user!.tenantId}`, {
         headers: { Authorization: req.headers.authorization },
       }),
-      safeServiceJson(`${env.DATA_SERVICE_URL}/datasets`, {
-        headers: { Authorization: req.headers.authorization },
-      }, []),
+      loadTenantDatasetRegistry(req),
       safeServiceJson(`${env.TRAINING_SERVICE_URL}/internal/models?tenantId=${req.user!.tenantId}`, {
         headers: { Authorization: req.headers.authorization },
       }, []),
@@ -480,11 +498,22 @@ app.get("/api/v1/dashboard", authenticate, async (req: AuthenticatedRequest, res
       safeServiceJson(`${env.PREDICTION_SERVICE_URL}/internal/predictions/recent-decisions?tenantId=${req.user!.tenantId}`),
     ]);
 
+    const normalizedModels = (Array.isArray(models.body) ? models.body : []).map(normalizeModel);
+    const visibleModels = datasetRegistry.ok
+      ? filterModelsByDatasetIds(normalizedModels, datasetRegistry.datasetIds)
+      : normalizedModels;
+    const totalDatasets = datasetRegistry.ok
+      ? datasetRegistry.datasets.length
+      : Number(analytics.body?.metrics?.total_datasets ?? 0);
+    const totalModels = datasetRegistry.ok
+      ? visibleModels.length
+      : Number(analytics.body?.metrics?.total_models ?? normalizedModels.length);
+
     const dashboardResponse = {
       analytics: {
         metrics: {
-          totalDatasets: Number(analytics.body?.metrics?.total_datasets ?? (Array.isArray(datasets.body) ? datasets.body.length : 0)),
-          totalModels: Number(analytics.body?.metrics?.total_models ?? (Array.isArray(models.body) ? models.body.length : 0)),
+          totalDatasets,
+          totalModels,
           totalPredictions: Number(analytics.body?.metrics?.total_predictions ?? 0),
           creditsUsed: Number(analytics.body?.metrics?.credits_used ?? 0),
           fraudAlerts: Number(analytics.body?.metrics?.fraud_alerts ?? 0),
@@ -497,8 +526,8 @@ app.get("/api/v1/dashboard", authenticate, async (req: AuthenticatedRequest, res
         })),
       },
       balance: UNLIMITED_BALANCE,
-      datasets: (Array.isArray(datasets.body) ? datasets.body : []).map(normalizeDataset),
-      models: (Array.isArray(models.body) ? models.body : []).map(normalizeModel),
+      datasets: datasetRegistry.ok ? datasetRegistry.datasets : [],
+      models: visibleModels,
       pendingPredictions: Array.isArray(pendingPredictions.body) ? pendingPredictions.body : [],
       recentDecisions: Array.isArray(recentDecisions.body) ? recentDecisions.body : [],
     };
@@ -677,6 +706,39 @@ app.post("/api/v1/datasets", authenticate, async (req: AuthenticatedRequest, res
   console.log("[GATEWAY] Request piped to Busboy.");
 });
 
+app.delete("/api/v1/datasets/:datasetId", authenticate, async (req: AuthenticatedRequest, res) => {
+  try {
+    const datasetId = z.string().uuid().safeParse(req.params.datasetId);
+    if (!datasetId.success) return res.status(400).json({ error: "Invalid dataset ID format." });
+
+    // Guard: refuse delete while training is in progress for this dataset
+    const existingModels = await safeServiceJson(
+      `${env.TRAINING_SERVICE_URL}/internal/models?tenantId=${req.user!.tenantId}`,
+      { headers: { Authorization: req.headers.authorization } },
+      [],
+    );
+    const inFlight = (Array.isArray(existingModels.body) ? existingModels.body : []).some((m: any) => {
+      const status = (m?.last_training_status || m?.lastTrainingStatus || "").toLowerCase();
+      return (m?.dataset_id === datasetId.data || m?.datasetId === datasetId.data) && (status === "queued" || status === "processing");
+    });
+    if (inFlight) {
+      return res.status(409).json({ error: "Cannot delete dataset while a training run is in progress." });
+    }
+
+    const { response, body } = await serviceJson(`${env.DATA_SERVICE_URL}/datasets/${datasetId.data}`, {
+      method: "DELETE",
+      headers: {
+        Authorization: req.headers.authorization,
+        "x-tenant-id": req.user!.tenantId,
+      },
+    });
+    res.status(response.status).json(body);
+  } catch (error) {
+    console.error(error);
+    res.status(502).json({ error: "Unable to delete dataset." });
+  }
+});
+
 app.post("/api/v1/datasets/:datasetId/mapping", authenticate, async (req: AuthenticatedRequest, res) => {
   try {
     const datasetId = z.string().uuid().safeParse(req.params.datasetId);
@@ -699,10 +761,16 @@ app.post("/api/v1/datasets/:datasetId/mapping", authenticate, async (req: Authen
 // Prediction & Training Routes
 app.get("/api/v1/models", authenticate, async (req: AuthenticatedRequest, res) => {
   try {
-    const { body } = await safeServiceJson(`${env.TRAINING_SERVICE_URL}/internal/models?tenantId=${req.user!.tenantId}`, {
-      headers: { Authorization: req.headers.authorization },
-    }, []);
-    const models = (Array.isArray(body) ? body : []).map(normalizeModel);
+    const [{ body }, datasetRegistry] = await Promise.all([
+      safeServiceJson(`${env.TRAINING_SERVICE_URL}/internal/models?tenantId=${req.user!.tenantId}`, {
+        headers: { Authorization: req.headers.authorization },
+      }, []),
+      loadTenantDatasetRegistry(req),
+    ]);
+    const normalizedModels = (Array.isArray(body) ? body : []).map(normalizeModel);
+    const models = datasetRegistry.ok
+      ? filterModelsByDatasetIds(normalizedModels, datasetRegistry.datasetIds)
+      : normalizedModels;
     
     try {
       res.json(z.array(dashboardModelSchema).parse(models));
@@ -746,9 +814,23 @@ app.post("/api/v1/models/train", authenticate, async (req: AuthenticatedRequest,
       headers: { "x-tenant-id": req.user!.tenantId, Authorization: req.headers.authorization },
     });
     if (!datasetResponse.response.ok) return res.status(datasetResponse.response.status).json(datasetResponse.body);
-    
+
     const dataset = datasetResponse.body;
     if (!dataset?.mapping) return res.status(400).json({ error: "Dataset mapping is required before training." });
+
+    // Guard: reject duplicate training-in-progress for same dataset
+    const existingModels = await safeServiceJson(
+      `${env.TRAINING_SERVICE_URL}/internal/models?tenantId=${req.user!.tenantId}`,
+      { headers: { Authorization: req.headers.authorization } },
+      [],
+    );
+    const inFlight = (Array.isArray(existingModels.body) ? existingModels.body : []).some((m: any) => {
+      const status = (m?.last_training_status || m?.lastTrainingStatus || "").toLowerCase();
+      return (m?.dataset_id === dataset.id || m?.datasetId === dataset.id) && (status === "queued" || status === "processing");
+    });
+    if (inFlight) {
+      return res.status(409).json({ error: "A training run is already in progress for this dataset. Please wait for it to finish." });
+    }
 
     const { response, body } = await serviceJson(`${env.TRAINING_SERVICE_URL}/internal/models/train`, {
       method: "POST",
@@ -830,6 +912,13 @@ app.post("/api/v1/predict", authenticate, predictLimiter, async (req: Authentica
   try {
     const accessToken = req.headers.authorization!;
     const payload: PredictRequest = predictRequestSchema.parse(req.body);
+
+    const datasetResponse = await serviceJson(`${env.DATA_SERVICE_URL}/internal/datasets/${payload.datasetId}`, {
+      headers: { Authorization: accessToken },
+    });
+    if (!datasetResponse.response.ok) {
+      return res.status(datasetResponse.response.status).json(datasetResponse.body);
+    }
     
 
     // 1. Core Prediction (Synchronous)
@@ -850,29 +939,38 @@ app.post("/api/v1/predict", authenticate, predictLimiter, async (req: Authentica
 
     // 4. Fire-and-Forget Auxiliary Tasks (Asynchronous)
     console.log(`[GATEWAY] Triggering async XAI/Fraud for prediction ${prediction.body.predictionId}`);
+    console.log(`[GATEWAY] XAI_SERVICE_URL: ${env.XAI_SERVICE_URL}`);
+    console.log(`[GATEWAY] FRAUD_SERVICE_URL: ${env.FRAUD_SERVICE_URL}`);
     (async () => {
        try {
-         const [explanation, fraud] = await Promise.all([
-           safeServiceJson(`${env.XAI_SERVICE_URL}/internal/explain/local`, {
-             method: "POST",
-             headers: { Authorization: accessToken },
-             body: JSON.stringify({ artifactKey: prediction.body.artifactKey, features: payload.features }),
-           }, null),
-           safeServiceJson(`${env.FRAUD_SERVICE_URL}/internal/fraud/evaluate`, {
-             method: "POST",
-             headers: { Authorization: accessToken },
-             body: JSON.stringify({
-               tenantId: req.user!.tenantId,
-               userId: req.user!.id,
-               fraudArtifactKey: prediction.body.fraudArtifactKey,
-               modelVersionId: prediction.body.modelVersion?.id,
-               features: payload.features,
-               email: req.user!.email,
-             }),
-           }, null),
-         ]);
+         console.log(`[GATEWAY] Calling XAI service for artifact: ${prediction.body.artifactKey}`);
+         const explanation = await safeServiceJson(`${env.XAI_SERVICE_URL}/internal/explain/local`, {
+           method: "POST",
+           headers: { Authorization: accessToken },
+           body: JSON.stringify({ artifactKey: prediction.body.artifactKey, features: payload.features }),
+         }, null);
+         console.log(`[GATEWAY] XAI response: ok=${explanation.ok}, hasBody=${!!explanation.body}`);
+         if (!explanation.ok) {
+           console.error(`[GATEWAY] XAI failed:`, explanation.body || 'Unknown error');
+         }
 
-         await safeServiceJson(`${env.PREDICTION_SERVICE_URL}/internal/predictions/${prediction.body.predictionId}/metadata`, {
+         console.log(`[GATEWAY] Calling Fraud service`);
+         const fraud = await safeServiceJson(`${env.FRAUD_SERVICE_URL}/internal/fraud/evaluate`, {
+           method: "POST",
+           headers: { Authorization: accessToken },
+           body: JSON.stringify({
+             tenantId: req.user!.tenantId,
+             userId: req.user!.id,
+             fraudArtifactKey: prediction.body.fraudArtifactKey,
+             modelVersionId: prediction.body.modelVersion?.id,
+             features: payload.features,
+             email: req.user!.email,
+           }),
+         }, null);
+         console.log(`[GATEWAY] Fraud response: ok=${fraud.ok}`);
+
+         console.log(`[GATEWAY] Updating prediction metadata for ${prediction.body.predictionId}`);
+         const metaResult = await safeServiceJson(`${env.PREDICTION_SERVICE_URL}/internal/predictions/${prediction.body.predictionId}/metadata`, {
            method: "POST",
            headers: { Authorization: accessToken },
            body: JSON.stringify({
@@ -880,6 +978,7 @@ app.post("/api/v1/predict", authenticate, predictLimiter, async (req: Authentica
              fraud: fraud.ok ? fraud.body : null,
            }),
          }, null);
+         console.log(`[GATEWAY] Metadata update: ok=${metaResult.ok}`);
          console.log(`[GATEWAY] Async enrichment finished for ${prediction.body.predictionId}`);
        } catch (err) {
          console.error(`[GATEWAY] Async enrichment failed for ${prediction.body.predictionId}:`, err);
@@ -913,6 +1012,9 @@ app.post("/api/v1/predict", authenticate, predictLimiter, async (req: Authentica
 
     res.json(normalized);
   } catch (error: any) {
+    if (error?.name === "ZodError") {
+      return res.status(422).json({ error: error.flatten?.() ?? "Invalid prediction request." });
+    }
     if (isOfflineError(error)) {
       return res.status(503).json({ error: "AI Prediction service is offline. Please start the AI profile: docker compose --profile ai up" });
     }
@@ -989,18 +1091,27 @@ app.post("/api/v1/predict/batch", authenticate, predictLimiter, upload.single("f
     const accessToken = req.headers.authorization!;
     if (!req.file) return res.status(400).json({ error: "File is required." });
 
-    const { datasetId } = req.body;
-    if (!datasetId) return res.status(400).json({ error: "datasetId is required." });
+    const parsedBody = z.object({
+      datasetId: z.string().uuid(),
+      modelVersionId: z.string().uuid().optional(),
+    }).parse(req.body);
+
+    const datasetResponse = await serviceJson(`${env.DATA_SERVICE_URL}/internal/datasets/${parsedBody.datasetId}`, {
+      headers: { Authorization: accessToken },
+    });
+    if (!datasetResponse.response.ok) {
+      return res.status(datasetResponse.response.status).json(datasetResponse.body);
+    }
 
     // Forward to prediction service
     const formData = new FormData();
     if (req.file) {
       formData.append("file", new Blob([new Uint8Array(req.file.buffer)]), req.file.originalname);
     }
-    formData.append("datasetId", String(datasetId));
+    formData.append("datasetId", parsedBody.datasetId);
     formData.append("tenantId", req.user!.tenantId);
     formData.append("userId", req.user!.id);
-    if (req.body.modelVersionId) formData.append("modelVersionId", String(req.body.modelVersionId));
+    if (parsedBody.modelVersionId) formData.append("modelVersionId", parsedBody.modelVersionId);
 
     const predictionResponse = await fetch(`${env.PREDICTION_SERVICE_URL}/internal/predict-batch`, {
       method: "POST",
@@ -1015,6 +1126,9 @@ app.post("/api/v1/predict/batch", authenticate, predictLimiter, upload.single("f
 
     res.status(prediction.response.status).json(prediction.body);
   } catch (error: any) {
+    if (error?.name === "ZodError") {
+      return res.status(422).json({ error: error.flatten?.() ?? "Invalid batch prediction request." });
+    }
     console.error(error);
     res.status(500).json({ error: error.message || "Batch prediction failed." });
   }
@@ -1070,6 +1184,72 @@ app.get("/api/v1/predict/batch/:batchJobId/download", authenticate, async (req: 
   } catch (error: any) {
     console.error(error);
     res.status(500).json({ error: error.message || "Download failed." });
+  }
+});
+
+// Notification Routes
+app.get("/api/v1/notifications", authenticate, async (req: AuthenticatedRequest, res) => {
+  try {
+    const { response, body } = await serviceJson(
+      `${env.NOTIFICATION_SERVICE_URL}/api/v1/notifications?${new URLSearchParams(req.query as any)}`,
+      { headers: { Authorization: req.headers.authorization } }
+    );
+    res.status(response.status).json(body);
+  } catch (error) {
+    console.error(error);
+    res.status(502).json({ error: "Unable to fetch notifications." });
+  }
+});
+
+app.get("/api/v1/notifications/unread-count", authenticate, async (req: AuthenticatedRequest, res) => {
+  try {
+    const { response, body } = await serviceJson(
+      `${env.NOTIFICATION_SERVICE_URL}/api/v1/notifications/unread-count`,
+      { headers: { Authorization: req.headers.authorization } }
+    );
+    res.status(response.status).json(body);
+  } catch (error) {
+    console.error(error);
+    res.status(502).json({ error: "Unable to fetch unread count." });
+  }
+});
+
+app.patch("/api/v1/notifications/:id/read", authenticate, async (req: AuthenticatedRequest, res) => {
+  try {
+    const { response, body } = await serviceJson(
+      `${env.NOTIFICATION_SERVICE_URL}/api/v1/notifications/${req.params.id}/read`,
+      { method: "PATCH", headers: { Authorization: req.headers.authorization } }
+    );
+    res.status(response.status).json(body);
+  } catch (error) {
+    console.error(error);
+    res.status(502).json({ error: "Unable to mark notification as read." });
+  }
+});
+
+app.patch("/api/v1/notifications/mark-all-read", authenticate, async (req: AuthenticatedRequest, res) => {
+  try {
+    const { response, body } = await serviceJson(
+      `${env.NOTIFICATION_SERVICE_URL}/api/v1/notifications/mark-all-read`,
+      { method: "PATCH", headers: { Authorization: req.headers.authorization } }
+    );
+    res.status(response.status).json(body);
+  } catch (error) {
+    console.error(error);
+    res.status(502).json({ error: "Unable to mark all notifications as read." });
+  }
+});
+
+app.delete("/api/v1/notifications/:id", authenticate, async (req: AuthenticatedRequest, res) => {
+  try {
+    const { response, body } = await serviceJson(
+      `${env.NOTIFICATION_SERVICE_URL}/api/v1/notifications/${req.params.id}`,
+      { method: "DELETE", headers: { Authorization: req.headers.authorization } }
+    );
+    res.status(response.status).json(body);
+  } catch (error) {
+    console.error(error);
+    res.status(502).json({ error: "Unable to delete notification." });
   }
 });
 

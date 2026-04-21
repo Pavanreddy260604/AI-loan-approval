@@ -56,8 +56,8 @@ const NestedComponent: React.FC<{ level: number; shouldBreak: boolean }> = ({ le
   }
 
   return (
-    <div style={{ paddingLeft: '16px', borderLeft: '2px solid #27272a', marginLeft: '8px' }}>
-      <div style={{ color: '#a1a1aa', marginBottom: '8px' }}>Level {level}</div>
+    <div className="pl-4 ml-2 bg-base-900/30 rounded-r-lg">
+      <div className="text-base-400 text-sm mb-2">Level {level}</div>
       <NestedComponent level={level - 1} shouldBreak={shouldBreak} />
     </div>
   );

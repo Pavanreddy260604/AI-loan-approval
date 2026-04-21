@@ -1,0 +1,123 @@
+# Consolidated Docker Compose for Free Tier Deployment
+# Combines microservices into 3 main services to fit free tier limits
+
+services:
+  # Service 1: Core API (merged gateway + auth + data + analytics)
+  core-api:
+    build:
+      context: .
+      dockerfile: ./infra/docker/consolidated-core.Dockerfile
+    environment:
+      - NODE_ENV=production
+      - PORT=4000
+      # All DB URLs
+      - AUTH_DATABASE_URL=${AUTH_DATABASE_URL}
+      - DATA_DATABASE_URL=${DATA_DATABASE_URL}
+      - ANALYTICS_DATABASE_URL=${ANALYTICS_DATABASE_URL}
+      # Infrastructure
+      - RABBITMQ_URL=${RABBITMQ_URL}
+      - REDIS_URL=${REDIS_URL}
+      # JWT
+      - JWT_PRIVATE_KEY_BASE64=${JWT_PRIVATE_KEY_BASE64}
+      - JWT_PUBLIC_KEY_BASE64=${JWT_PUBLIC_KEY_BASE64}
+      - JWT_ISSUER=${JWT_ISSUER}
+      - JWT_AUDIENCE=${JWT_AUDIENCE}
+      # SMTP
+      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_PORT=${SMTP_PORT}
+      - SMTP_USER=${SMTP_USER}
+      - SMTP_PASS=${SMTP_PASS}
+      - SMTP_FROM=${SMTP_FROM}
+      - SMTP_SECURE=${SMTP_SECURE}
+    ports:
+      - "4000:4000"
+    depends_on:
+      - postgres
+      - rabbitmq
+      - redis
+
+  # Service 2: AI Engine (merged training + prediction + fraud + xai)
+  ai-engine:
+    build:
+      context: .
+      dockerfile: ./infra/docker/consolidated-ai.Dockerfile
+    environment:
+      - NODE_ENV=production
+      # All DB URLs
+      - TRAINING_DATABASE_URL=${TRAINING_DATABASE_URL}
+      - PREDICTION_DATABASE_URL=${PREDICTION_DATABASE_URL}
+      - FRAUD_DATABASE_URL=${FRAUD_DATABASE_URL}
+      # Infrastructure
+      - RABBITMQ_URL=${RABBITMQ_URL}
+      - REDIS_URL=${REDIS_URL}
+      - MINIO_ENDPOINT=${MINIO_ENDPOINT}
+      - MINIO_PORT=${MINIO_PORT}
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
+      - S3_BUCKET_MODELS=${S3_BUCKET_MODELS}
+      - S3_BUCKET_DATASETS=${S3_BUCKET_DATASETS}
+      # ML Keys
+      - MODEL_ARTIFACT_SIGNING_KEY=${MODEL_ARTIFACT_SIGNING_KEY}
+      - TRAINING_RANDOM_SEED=${TRAINING_RANDOM_SEED}
+    ports:
+      - "5000:5000"  # Unified AI API
+    depends_on:
+      - postgres
+      - rabbitmq
+      - minio
+    deploy:
+      resources:
+        limits:
+          memory: 4G  # AI needs more RAM
+
+  # Service 3: Frontend
+  web:
+    build:
+      context: .
+      dockerfile: ./infra/docker/web.Dockerfile
+    environment:
+      - NODE_ENV=production
+      - VITE_GATEWAY_ORIGIN=${VITE_GATEWAY_ORIGIN}
+    ports:
+      - "5175:5175"
+    depends_on:
+      - core-api
+
+  # Infrastructure (always needed)
+  postgres:
+    image: postgres:16.4-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/docker/init-databases.sql:/docker-entrypoint-initdb.d/init-databases.sql:ro
+    ports:
+      - "5432:5432"
+
+  rabbitmq:
+    image: rabbitmq:3.13.6-management-alpine
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+
+  redis:
+    image: redis:7.4-alpine
+    ports:
+      - "6380:6379"
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+
+volumes:
+  postgres_data:
+  minio_data:

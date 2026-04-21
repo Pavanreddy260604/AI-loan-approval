@@ -373,9 +373,21 @@ async function queueDatasetReprofile(dataset: DatasetRecord): Promise<boolean> {
   return true;
 }
 
+function columnsLookBogus(columns: DatasetColumnSummary[]): boolean {
+  if (!columns.length) return false;
+  // Real loan-data column names are never short integers like "1","2","3"
+  // or pandas' "Unnamed: N" placeholders. If we see those, the profiler
+  // read a data row as the header and the dataset needs re-profiling.
+  const names = columns.map((c) => String(c.name ?? "").trim());
+  const shortInt = names.filter((n) => /^-?\d{1,3}$/.test(n));
+  const unnamed = names.filter((n) => /^Unnamed:\s*\d+$/i.test(n) || n === "");
+  return shortInt.length >= 2 || unnamed.length >= 1;
+}
+
 async function ensureDatasetInsights(dataset: DatasetRecord, columns: DatasetColumnSummary[]) {
   const statsReady = columns.length > 0 && columns.every(hasDatasetStats);
-  if (statsReady) {
+  const bogus = columnsLookBogus(columns);
+  if (statsReady && !bogus) {
     return { profileStatus: dataset.profileStatus ?? "ready", statsReady: true };
   }
 
@@ -745,6 +757,27 @@ app.post("/datasets/:datasetId/mapping", authenticateInternal, async (req: Authe
     }
     logger.error({ error, datasetId: req.params.datasetId }, "Dataset column mapping save failed");
     res.status(500).json({ error: "Unable to save dataset mapping." });
+  }
+});
+
+app.delete("/datasets/:datasetId", authenticateInternal, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const dataset = mapRows(
+      await pool.query(`SELECT * FROM datasets WHERE id = $1 AND tenant_id = $2`, [req.params.datasetId, tenantId]),
+      true,
+    )[0] as DatasetRecord | undefined;
+    if (!dataset) return res.status(404).json({ error: "Dataset not found." });
+
+    // Cascade clean up: columns, mapping, then dataset row
+    await pool.query(`DELETE FROM dataset_mappings WHERE dataset_id = $1`, [dataset.id]);
+    await pool.query(`DELETE FROM dataset_columns WHERE dataset_id = $1`, [dataset.id]);
+    await pool.query(`DELETE FROM datasets WHERE id = $1 AND tenant_id = $2`, [dataset.id, tenantId]);
+
+    res.json({ message: "Dataset deleted.", datasetId: dataset.id });
+  } catch (error: any) {
+    logger.error({ error, datasetId: req.params.datasetId }, "Dataset delete failed");
+    res.status(500).json({ error: "Unable to delete dataset." });
   }
 });
 
